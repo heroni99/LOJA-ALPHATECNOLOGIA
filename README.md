@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Alpha Tecnologia
 
-## Getting Started
+Aplicação Next.js 14 com Supabase (autenticação, estoque, emissions de vendas, PDV e OS).
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. `npm install`
+2. Copie `.env.example` para `.env.local` e preencha as variáveis listadas abaixo.
+3. Execute `npm run dev` e abra `http://localhost:3000`.
+4. Defina o schema e o seed no Supabase conforme descrito em `supabase/README.md`.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Variáveis de ambiente
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `NEXT_PUBLIC_SUPABASE_URL`: URL pública do projeto Supabase (`https://xxx.supabase.co`)
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: chave `anon/public`
+- `SUPABASE_SERVICE_ROLE_KEY`: chave `service_role` usada apenas no servidor
+- `NEXT_PUBLIC_APP_URL`: URL pública da aplicação (ex: `https://seu-app.vercel.app`)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+As mesmas variáveis são necessárias no Vercel para deploy automático (veja checklist abaixo).
 
-## Learn More
+## Supabase
 
-To learn more about Next.js, take a look at the following resources:
+Toda a configuração inicial do banco está em `supabase/schema.sql` e o seed em `supabase/seed.sql`. Para instruções passo a passo (rodar schema, seed, políticas e storage) consulte `supabase/README.md`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deploy no Vercel
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Conecte o repositório no Vercel e configure a project settings.
+2. Garanta que as variáveis de ambiente acima estejam definidas no Vercel (use os valores do seu projeto Supabase e a URL pública do deploy).
+3. O deploy é disparado automaticamente ao dar push para `main` (o comando de build é `npm run build` e usamos `.next` como saída).
+4. Após o deploy, valide: login, área de PDV, scanner e upload de imagem (produto / OS).
 
-## Deploy on Vercel
+## Checklist pós-deploy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Definir `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` e `NEXT_PUBLIC_APP_URL` no Vercel.
+2. Dar push em `main`.
+3. Validar funcionalidades chave: autenticação, PDV, scanner, upload de imagens.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
