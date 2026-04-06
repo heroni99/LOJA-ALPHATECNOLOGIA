@@ -183,7 +183,7 @@ with store as (
 seed_categories(id, name, prefix, description, default_serialized, sequence_name) as (
   values
     (
-      '33333333-3333-3333-3333-333333333301',
+      '33333333-3333-3333-3333-333333333301'::uuid,
       'Celulares',
       'CEL',
       'Smartphones e celulares.',
@@ -191,7 +191,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_cel'
     ),
     (
-      '33333333-3333-3333-3333-333333333302',
+      '33333333-3333-3333-3333-333333333302'::uuid,
       'Acessorios',
       'ACE',
       'Acessorios em geral.',
@@ -199,7 +199,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_ace'
     ),
     (
-      '33333333-3333-3333-3333-333333333303',
+      '33333333-3333-3333-3333-333333333303'::uuid,
       'Capas',
       'CAP',
       'Capas de protecao.',
@@ -207,7 +207,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_cap'
     ),
     (
-      '33333333-3333-3333-3333-333333333304',
+      '33333333-3333-3333-3333-333333333304'::uuid,
       'Peliculas',
       'PEL',
       'Peliculas e vidros de protecao.',
@@ -215,7 +215,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_pel'
     ),
     (
-      '33333333-3333-3333-3333-333333333305',
+      '33333333-3333-3333-3333-333333333305'::uuid,
       'Carregadores',
       'CAR',
       'Carregadores e fontes.',
@@ -223,7 +223,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_car'
     ),
     (
-      '33333333-3333-3333-3333-333333333306',
+      '33333333-3333-3333-3333-333333333306'::uuid,
       'Fones',
       'FON',
       'Fones de ouvido.',
@@ -231,7 +231,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_fon'
     ),
     (
-      '33333333-3333-3333-3333-333333333307',
+      '33333333-3333-3333-3333-333333333307'::uuid,
       'Smartwatches',
       'SWT',
       'Relogios inteligentes.',
@@ -239,7 +239,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_swt'
     ),
     (
-      '33333333-3333-3333-3333-333333333308',
+      '33333333-3333-3333-3333-333333333308'::uuid,
       'Tablets',
       'TAB',
       'Tablets e dispositivos similares.',
@@ -247,7 +247,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_tab'
     ),
     (
-      '33333333-3333-3333-3333-333333333309',
+      '33333333-3333-3333-3333-333333333309'::uuid,
       'Notebooks',
       'NOT',
       'Notebooks e ultrabooks.',
@@ -255,7 +255,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_not'
     ),
     (
-      '33333333-3333-3333-3333-333333333310',
+      '33333333-3333-3333-3333-333333333310'::uuid,
       'Pecas',
       'PEC',
       'Componentes e pecas tecnicas.',
@@ -263,7 +263,7 @@ seed_categories(id, name, prefix, description, default_serialized, sequence_name
       'category_seq_loja_001_pec'
     ),
     (
-      '33333333-3333-3333-3333-333333333311',
+      '33333333-3333-3333-3333-333333333311'::uuid,
       'Servicos',
       'SRV',
       'Servicos tecnicos.',
