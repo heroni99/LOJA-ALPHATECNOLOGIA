@@ -5,14 +5,9 @@ export const CUSTOMERS_PAGE_SIZE = 10
 type SearchParamsLike = Record<string, string | string[] | undefined>
 
 export const customerMutationSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Informe o nome do cliente."),
-  phone: z
-    .string()
-    .trim()
-    .min(1, "Informe o telefone do cliente."),
+  name: z.string().trim().min(1, "Informe o nome do cliente."),
+  phone: z.string().trim().min(1, "Informe o telefone do cliente."),
+  phone2: z.string().trim().max(32).nullable().optional(),
   email: z.string().trim().max(160).nullable().optional(),
   cpf_cnpj: z.string().trim().max(32).nullable().optional(),
   zip_code: z.string().trim().max(20).nullable().optional(),
@@ -26,14 +21,9 @@ export const customerMutationSchema = z.object({
 export type CustomerMutationInput = z.infer<typeof customerMutationSchema>
 
 export const customerFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Informe o nome do cliente."),
-  phone: z
-    .string()
-    .trim()
-    .min(1, "Informe o telefone do cliente."),
+  name: z.string().trim().min(1, "Informe o nome do cliente."),
+  phone: z.string().trim().min(1, "Informe o telefone do cliente."),
+  phone2: z.string().optional(),
   email: z.string().optional(),
   cpf_cnpj: z.string().optional(),
   zip_code: z.string().optional(),
@@ -52,6 +42,7 @@ export type CustomerSummary = {
   phone: string | null
   cpfCnpj: string | null
   city: string | null
+  state: string | null
   active: boolean
 }
 
@@ -59,6 +50,7 @@ export type CustomerDetail = {
   id: string
   name: string
   phone: string | null
+  phone2: string | null
   email: string | null
   cpfCnpj: string | null
   zipCode: string | null
@@ -99,18 +91,22 @@ export type CustomerReceivable = {
   status: string
   receivedAt: string | null
   saleId: string | null
+  saleNumber: string | null
   serviceOrderId: string | null
+  serviceOrderNumber: string | null
 }
 
 export type CustomerListFilters = {
   search: string
   active: boolean | null
   page: number
+  limit: number
 }
 
 export const defaultCustomerFormValues: CustomerFormValues = {
   name: "",
   phone: "",
+  phone2: "",
   email: "",
   cpf_cnpj: "",
   zip_code: "",
@@ -143,11 +139,16 @@ export function getCustomerListFilters(
   }
 
   const page = Number.parseInt(getValue("page") ?? "1", 10)
+  const limit = Number.parseInt(getValue("limit") ?? String(CUSTOMERS_PAGE_SIZE), 10)
 
   return {
     search: (getValue("search") ?? "").trim(),
     active: parseBooleanFilter(getValue("active")),
     page: Number.isFinite(page) && page > 0 ? page : 1,
+    limit:
+      Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.max(limit, 1), 100)
+        : CUSTOMERS_PAGE_SIZE,
   }
 }
 
@@ -159,6 +160,7 @@ export function toCustomerMutationInput(
   return {
     name: parsed.name.trim(),
     phone: parsed.phone.trim(),
+    phone2: normalizeOptionalString(parsed.phone2),
     email: normalizeOptionalString(parsed.email),
     cpf_cnpj: normalizeOptionalString(parsed.cpf_cnpj),
     zip_code: normalizeOptionalString(parsed.zip_code),
@@ -175,6 +177,7 @@ export function toCustomerFormValues(
     CustomerDetail,
     | "name"
     | "phone"
+    | "phone2"
     | "email"
     | "cpfCnpj"
     | "zipCode"
@@ -188,6 +191,7 @@ export function toCustomerFormValues(
   return {
     name: customer.name,
     phone: customer.phone ?? "",
+    phone2: customer.phone2 ?? "",
     email: customer.email ?? "",
     cpf_cnpj: customer.cpfCnpj ?? "",
     zip_code: customer.zipCode ?? "",

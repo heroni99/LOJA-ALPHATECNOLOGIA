@@ -6,6 +6,7 @@ import { Plus } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   accountPayableCreateFormSchema,
   defaultAccountPayableCreateFormValues,
@@ -41,6 +42,7 @@ import {
   type AccountPayableCreateFormValues,
   toAccountPayableMutationInput,
 } from "@/lib/financial"
+import { toast } from "@/lib/toast"
 import type { PurchaseOrderFormSupplierOption } from "@/lib/purchase-orders"
 
 type AccountPayableCreateDialogProps = {
@@ -72,7 +74,8 @@ export function AccountPayableCreateDialog({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(
+        throw createApiError(
+          response.status,
           responseData?.error ?? "Não foi possível criar a conta a pagar."
         )
       }
@@ -82,11 +85,12 @@ export function AccountPayableCreateDialog({
       form.reset(defaultAccountPayableCreateFormValues)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível criar a conta a pagar."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -114,107 +118,109 @@ export function AccountPayableCreateDialog({
             onSubmit={form.handleSubmit(handleSubmit)}
             className="grid gap-4"
           >
-            <FormField
-              control={form.control}
-              name="supplier_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Fornecedor</FormLabel>
-                  <Select
-                    value={field.value || "none"}
-                    onValueChange={(value) =>
-                      field.onChange(value === "none" ? "" : value)
-                    }
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Selecione o fornecedor" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="none">Sem fornecedor</SelectItem>
-                      {suppliers.map((supplier) => (
-                        <SelectItem key={supplier.id} value={supplier.id}>
-                          {supplier.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Descrição</FormLabel>
-                  <FormControl>
-                    <Input {...field} placeholder="Ex.: Compra emergencial de acessórios" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="grid gap-4 md:grid-cols-2">
+            <fieldset disabled={isSaving} className="grid gap-4">
               <FormField
                 control={form.control}
-                name="amount"
+                name="supplier_id"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Valor</FormLabel>
+                    <FormLabel>Fornecedor</FormLabel>
+                    <Select
+                      value={field.value || "none"}
+                      onValueChange={(value) =>
+                        field.onChange(value === "none" ? "" : value)
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione o fornecedor" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">Sem fornecedor</SelectItem>
+                        {suppliers.map((supplier) => (
+                          <SelectItem key={supplier.id} value={supplier.id}>
+                            {supplier.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Descrição</FormLabel>
                     <FormControl>
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                          R$
-                        </span>
-                        <Input
-                          value={field.value}
-                          className="pl-10"
-                          inputMode="numeric"
-                          onChange={(event) =>
-                            field.onChange(
-                              formatFinancialCurrencyInput(event.target.value)
-                            )
-                          }
-                        />
-                      </div>
+                      <Input {...field} placeholder="Ex.: Compra emergencial de acessórios" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="amount"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Valor</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                            R$
+                          </span>
+                          <Input
+                            value={field.value}
+                            className="pl-10"
+                            inputMode="numeric"
+                            onChange={(event) =>
+                              field.onChange(
+                                formatFinancialCurrencyInput(event.target.value)
+                              )
+                            }
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="due_date"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Vencimento</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="date" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
               <FormField
                 control={form.control}
-                name="due_date"
+                name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Vencimento</FormLabel>
+                    <FormLabel>Observações</FormLabel>
                     <FormControl>
-                      <Input {...field} type="date" />
+                      <Textarea {...field} className="min-h-24" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
-
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Observações</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} className="min-h-24" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            </fieldset>
           </form>
         </Form>
 
@@ -222,13 +228,14 @@ export function AccountPayableCreateDialog({
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancelar
           </Button>
-          <Button
+          <LoadingButton
             type="submit"
             form="accounts-payable-create-form"
-            disabled={isSaving}
+            isLoading={isSaving}
+            loadingLabel="Salvando..."
           >
-            {isSaving ? "Salvando..." : "Criar conta"}
-          </Button>
+            Criar conta
+          </LoadingButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

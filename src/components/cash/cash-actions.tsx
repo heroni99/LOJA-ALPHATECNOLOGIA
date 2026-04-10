@@ -1,11 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import {
-  ArrowDownCircle,
-  ArrowUpCircle,
-  Receipt,
-} from "lucide-react"
+import { ArrowDownCircle, ArrowUpCircle, Receipt } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { ZodError } from "zod"
 
@@ -13,14 +9,17 @@ import {
   defaultCashCloseFormValues,
   defaultCashSupplyFormValues,
   defaultCashWithdrawalFormValues,
-  formatCashCurrencyInput,
   formatCentsToBRL,
   formatSignedCentsToBRL,
   toCashCloseMutationInput,
   toCashSupplyMutationInput,
   toCashWithdrawalMutationInput,
 } from "@/lib/cash"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
+import { LoadingButton } from "@/components/shared/loading-button"
+import { MoneyInput } from "@/components/shared/money-input"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -31,9 +30,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
 
 type CashActionsProps = {
   expectedAmountCents: number
@@ -44,11 +41,7 @@ function getValidationMessage(error: unknown) {
     return error.issues[0]?.message ?? "Dados inválidos."
   }
 
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível processar a operação."
+  return parseApiError(error)
 }
 
 export function CashActions({ expectedAmountCents }: CashActionsProps) {
@@ -65,13 +58,10 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
   )
   const [closeValues, setCloseValues] = useState(defaultCashCloseFormValues)
 
-  const closeDifferenceCents = useMemo(() => {
-    try {
-      return toCashCloseMutationInput(closeValues).closing_amount - expectedAmountCents
-    } catch {
-      return -expectedAmountCents
-    }
-  }, [closeValues, expectedAmountCents])
+  const closeDifferenceCents = useMemo(
+    () => closeValues.closing_amount - expectedAmountCents,
+    [closeValues.closing_amount, expectedAmountCents]
+  )
 
   async function submitRequest(
     endpoint: string,
@@ -88,7 +78,8 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
     const responseData = await response.json().catch(() => null)
 
     if (!response.ok) {
-      throw new Error(
+      throw createApiError(
+        response.status,
         responseData?.error ?? "Não foi possível processar a operação."
       )
     }
@@ -112,6 +103,11 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
       setSupplyValues(defaultCashSupplyFormValues)
     } catch (error) {
       toast.error(getValidationMessage(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(null)
     }
@@ -132,6 +128,11 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
       setWithdrawalValues(defaultCashWithdrawalFormValues)
     } catch (error) {
       toast.error(getValidationMessage(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(null)
     }
@@ -146,12 +147,17 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
       await submitRequest(
         "/api/cash/close",
         payload,
-        "Caixa fechado com sucesso."
+        "Caixa fechado. Nova sessão aberta automaticamente."
       )
       setCloseOpen(false)
       setCloseValues(defaultCashCloseFormValues)
     } catch (error) {
       toast.error(getValidationMessage(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(null)
     }
@@ -170,62 +176,55 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
           <DialogHeader>
             <DialogTitle>Registrar suprimento</DialogTitle>
             <DialogDescription>
-              Adicione dinheiro ao caixa atual e registre a origem do valor.
+              Adicione dinheiro à sessão atual e registre a origem do valor.
             </DialogDescription>
           </DialogHeader>
 
           <form className="grid gap-4" onSubmit={handleSupplySubmit}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Valor *
-              </label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                  R$
-                </span>
-                <Input
+            <fieldset disabled={isSaving === "supply"} className="grid gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Valor *</label>
+                <MoneyInput
                   value={supplyValues.amount}
-                  className="pl-10"
-                  inputMode="numeric"
+                  onChange={(value) =>
+                    setSupplyValues((current) => ({
+                      ...current,
+                      amount: value,
+                    }))
+                  }
+                  placeholder="0,00"
+                  disabled={isSaving === "supply"}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Descrição</label>
+                <Textarea
+                  value={supplyValues.description}
+                  className="min-h-28"
+                  placeholder="Ex.: reforço para troco do turno."
                   onChange={(event) =>
                     setSupplyValues((current) => ({
                       ...current,
-                      amount: formatCashCurrencyInput(event.target.value),
+                      description: event.target.value,
                     }))
                   }
                 />
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Descrição *
-              </label>
-              <Textarea
-                value={supplyValues.description}
-                className="min-h-28"
-                placeholder="Ex.: reforço para troco do turno."
-                onChange={(event) =>
-                  setSupplyValues((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setSupplyOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={isSaving === "supply"}>
-                {isSaving === "supply" ? "Salvando..." : "Confirmar"}
-              </Button>
-            </DialogFooter>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setSupplyOpen(false)}>
+                  Cancelar
+                </Button>
+                <LoadingButton
+                  type="submit"
+                  isLoading={isSaving === "supply"}
+                  loadingLabel="Salvando..."
+                >
+                  Confirmar
+                </LoadingButton>
+              </DialogFooter>
+            </fieldset>
           </form>
         </DialogContent>
       </Dialog>
@@ -241,62 +240,59 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
           <DialogHeader>
             <DialogTitle>Registrar sangria</DialogTitle>
             <DialogDescription>
-              Retire dinheiro do caixa atual e documente o motivo da saída.
+              Retire dinheiro da sessão atual e documente o motivo da saída.
             </DialogDescription>
           </DialogHeader>
 
           <form className="grid gap-4" onSubmit={handleWithdrawalSubmit}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Valor *
-              </label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                  R$
-                </span>
-                <Input
+            <fieldset disabled={isSaving === "withdrawal"} className="grid gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Valor *</label>
+                <MoneyInput
                   value={withdrawalValues.amount}
-                  className="pl-10"
-                  inputMode="numeric"
+                  onChange={(value) =>
+                    setWithdrawalValues((current) => ({
+                      ...current,
+                      amount: value,
+                    }))
+                  }
+                  placeholder="0,00"
+                  disabled={isSaving === "withdrawal"}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Motivo *</label>
+                <Textarea
+                  value={withdrawalValues.reason}
+                  className="min-h-28"
+                  placeholder="Ex.: retirada para despesa, depósito ou recolhimento."
                   onChange={(event) =>
                     setWithdrawalValues((current) => ({
                       ...current,
-                      amount: formatCashCurrencyInput(event.target.value),
+                      reason: event.target.value,
                     }))
                   }
                 />
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Motivo *
-              </label>
-              <Textarea
-                value={withdrawalValues.description}
-                className="min-h-28"
-                placeholder="Ex.: retirada para despesa, depósito ou recolhimento."
-                onChange={(event) =>
-                  setWithdrawalValues((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setWithdrawalOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={isSaving === "withdrawal"}>
-                {isSaving === "withdrawal" ? "Salvando..." : "Confirmar"}
-              </Button>
-            </DialogFooter>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setWithdrawalOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <LoadingButton
+                  type="submit"
+                  isLoading={isSaving === "withdrawal"}
+                  loadingLabel="Salvando..."
+                >
+                  Confirmar
+                </LoadingButton>
+              </DialogFooter>
+            </fieldset>
           </form>
         </DialogContent>
       </Dialog>
@@ -312,83 +308,78 @@ export function CashActions({ expectedAmountCents }: CashActionsProps) {
           <DialogHeader>
             <DialogTitle>Fechar caixa</DialogTitle>
             <DialogDescription>
-              Informe o valor contado. A diferença é calculada automaticamente.
+              Confira o valor esperado, informe o valor contado e finalize a sessão atual.
             </DialogDescription>
           </DialogHeader>
 
           <form className="grid gap-4" onSubmit={handleCloseSubmit}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Valor contado *
-              </label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                  R$
-                </span>
-                <Input
+            <fieldset disabled={isSaving === "close"} className="grid gap-4">
+              <div className="rounded-3xl border border-border/70 bg-muted/35 p-4">
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="text-muted-foreground">Valor esperado</span>
+                  <strong className="text-foreground">
+                    {formatCentsToBRL(expectedAmountCents)}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Valor contado *</label>
+                <MoneyInput
                   value={closeValues.closing_amount}
-                  className="pl-10"
-                  inputMode="numeric"
+                  onChange={(value) =>
+                    setCloseValues((current) => ({
+                      ...current,
+                      closing_amount: value,
+                    }))
+                  }
+                  placeholder="0,00"
+                  disabled={isSaving === "close"}
+                />
+              </div>
+
+              <div className="rounded-3xl border border-border/70 bg-muted/35 p-4">
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="text-muted-foreground">Diferença</span>
+                  <strong
+                    className={cn(
+                      closeDifferenceCents === 0 && "text-emerald-700",
+                      closeDifferenceCents !== 0 && "text-red-700"
+                    )}
+                  >
+                    {formatSignedCentsToBRL(closeDifferenceCents)}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Observações</label>
+                <Textarea
+                  value={closeValues.notes}
+                  className="min-h-24"
+                  placeholder="Opcional: observações do fechamento."
                   onChange={(event) =>
                     setCloseValues((current) => ({
                       ...current,
-                      closing_amount: formatCashCurrencyInput(event.target.value),
+                      notes: event.target.value,
                     }))
                   }
                 />
               </div>
-            </div>
 
-            <div className="rounded-3xl border border-border/70 bg-muted/35 p-4">
-              <div className="flex items-center justify-between gap-4 text-sm">
-                <span className="text-muted-foreground">Esperado</span>
-                <strong className="text-foreground">
-                  {formatCentsToBRL(expectedAmountCents)}
-                </strong>
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-4 text-sm">
-                <span className="text-muted-foreground">Diferença</span>
-                <strong
-                  className={cn(
-                    closeDifferenceCents > 0 && "text-emerald-700",
-                    closeDifferenceCents < 0 && "text-red-700",
-                    closeDifferenceCents === 0 && "text-foreground"
-                  )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setCloseOpen(false)}>
+                  Cancelar
+                </Button>
+                <LoadingButton
+                  type="submit"
+                  isLoading={isSaving === "close"}
+                  loadingLabel="Fechando..."
                 >
-                  {formatSignedCentsToBRL(closeDifferenceCents)}
-                </strong>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Observações
-              </label>
-              <Textarea
-                value={closeValues.notes}
-                className="min-h-24"
-                placeholder="Opcional: observações do fechamento."
-                onChange={(event) =>
-                  setCloseValues((current) => ({
-                    ...current,
-                    notes: event.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setCloseOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={isSaving === "close"}>
-                {isSaving === "close" ? "Fechando..." : "Confirmar fechamento"}
-              </Button>
-            </DialogFooter>
+                  Confirmar fechamento
+                </LoadingButton>
+              </DialogFooter>
+            </fieldset>
           </form>
         </DialogContent>
       </Dialog>

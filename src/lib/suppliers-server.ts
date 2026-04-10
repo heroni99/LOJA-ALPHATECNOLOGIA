@@ -7,6 +7,7 @@ import {
   type SupplierDetail,
   type SupplierListFilters,
   type SupplierMutationInput,
+  type SupplierPayable,
   type SupplierProduct,
   type SupplierPurchaseOrder,
   type SupplierSummary,
@@ -30,6 +31,21 @@ type SupplierRecord = {
   updated_at: string
 }
 
+type PurchaseOrderRecord = {
+  id: string
+  order_number: string
+}
+
+type PayableRecord = {
+  id: string
+  description: string
+  amount: number | string | null
+  due_date: string
+  paid_at: string | null
+  status: string
+  purchase_order_id: string | null
+}
+
 type ListSuppliersResult = {
   items: SupplierSummary[]
   totalCount: number
@@ -42,9 +58,12 @@ type SupplierFullDetail = {
   supplier: SupplierDetail
   products: SupplierProduct[]
   purchaseOrders: SupplierPurchaseOrder[]
+  payables: SupplierPayable[]
 }
 
-function mapSupplierSummary(record: SupplierRecord): SupplierSummary {
+function mapSupplierSummary(
+  record: Pick<SupplierRecord, "id" | "name" | "cnpj" | "phone" | "city" | "active">
+): SupplierSummary {
   return {
     id: record.id,
     name: record.name,
@@ -75,18 +94,38 @@ function mapSupplierDetail(record: SupplierRecord): SupplierDetail {
   }
 }
 
+async function listPurchaseOrdersByIds(storeId: string, ids: string[]) {
+  if (ids.length === 0) {
+    return new Map<string, PurchaseOrderRecord>()
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("purchase_orders")
+    .select("id, order_number")
+    .eq("store_id", storeId)
+    .in("id", ids)
+
+  if (error) {
+    throw error
+  }
+
+  return new Map(((data ?? []) as PurchaseOrderRecord[]).map((item) => [item.id, item]))
+}
+
 export async function listSuppliers(
   storeId: string,
   filters: SupplierListFilters
 ): Promise<ListSuppliersResult> {
   const supabase = await createClient({ serviceRole: true })
+  const pageSize = filters.limit || SUPPLIERS_PAGE_SIZE
   const buildQuery = (page: number) => {
-    const from = (page - 1) * SUPPLIERS_PAGE_SIZE
-    const to = from + SUPPLIERS_PAGE_SIZE - 1
+    const from = (page - 1) * pageSize
+    const to = from + pageSize - 1
 
     let query = supabase
       .from("suppliers")
-      .select("id, name, cnpj, phone, city, active, created_at, updated_at", {
+      .select("id, name, cnpj, phone, city, active", {
         count: "exact",
       })
       .eq("store_id", storeId)
@@ -118,7 +157,7 @@ export async function listSuppliers(
   }
 
   const totalCount = totalCountResult ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalCount / SUPPLIERS_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const currentPage = Math.min(filters.page, totalPages)
 
   if ((data?.length ?? 0) === 0 && totalCount > 0 && currentPage !== filters.page) {
@@ -133,11 +172,13 @@ export async function listSuppliers(
   }
 
   return {
-    items: ((data ?? []) as SupplierRecord[]).map(mapSupplierSummary),
+    items: ((data ?? []) as Array<
+      Pick<SupplierRecord, "id" | "name" | "cnpj" | "phone" | "city" | "active">
+    >).map(mapSupplierSummary),
     totalCount,
     totalPages,
     page: currentPage,
-    pageSize: SUPPLIERS_PAGE_SIZE,
+    pageSize,
   }
 }
 
@@ -216,6 +257,47 @@ export async function getSupplierPurchaseOrders(
   }))
 }
 
+export async function getSupplierPayables(
+  supplierId: string,
+  storeId: string
+): Promise<SupplierPayable[]> {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("accounts_payable")
+    .select("id, description, amount, due_date, status, paid_at, purchase_order_id")
+    .eq("store_id", storeId)
+    .eq("supplier_id", supplierId)
+    .order("due_date", { ascending: false })
+    .limit(10)
+
+  if (error) {
+    throw error
+  }
+
+  const payables = (data ?? []) as PayableRecord[]
+  const purchaseOrderIds = Array.from(
+    new Set(
+      payables
+        .map((item) => item.purchase_order_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  )
+  const purchaseOrdersMap = await listPurchaseOrdersByIds(storeId, purchaseOrderIds)
+
+  return payables.map((payable) => ({
+    id: payable.id,
+    description: payable.description,
+    amountCents: parseDbMoneyToCents(payable.amount),
+    dueDate: payable.due_date,
+    status: payable.status,
+    paidAt: payable.paid_at,
+    purchaseOrderId: payable.purchase_order_id,
+    purchaseOrderNumber: payable.purchase_order_id
+      ? purchaseOrdersMap.get(payable.purchase_order_id)?.order_number ?? null
+      : null,
+  }))
+}
+
 export async function getSupplierFullDetail(
   supplierId: string,
   storeId: string
@@ -226,15 +308,17 @@ export async function getSupplierFullDetail(
     return null
   }
 
-  const [products, purchaseOrders] = await Promise.all([
+  const [products, purchaseOrders, payables] = await Promise.all([
     getSupplierProducts(supplierId, storeId),
     getSupplierPurchaseOrders(supplierId, storeId),
+    getSupplierPayables(supplierId, storeId),
   ])
 
   return {
     supplier,
     products,
     purchaseOrders,
+    payables,
   }
 }
 
@@ -293,15 +377,19 @@ export async function updateSupplier(
   return getSupplierById(supplierId, storeId)
 }
 
-export async function deleteSupplier(supplierId: string, storeId: string) {
+export async function softDeleteSupplier(supplierId: string, storeId: string) {
   const supabase = await createClient({ serviceRole: true })
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("suppliers")
-    .delete()
+    .update({ active: false })
     .eq("store_id", storeId)
     .eq("id", supplierId)
+    .select("id")
+    .maybeSingle()
 
   if (error) {
     throw error
   }
+
+  return Boolean(data)
 }

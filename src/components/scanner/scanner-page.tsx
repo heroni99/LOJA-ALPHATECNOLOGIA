@@ -9,17 +9,18 @@ import {
   Smartphone,
   TriangleAlert,
 } from "lucide-react"
-import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { parseApiError } from "@/lib/api-error"
 import {
   normalizePairingCode,
   type ScannerScanInput,
   type ScannerSession,
 } from "@/lib/scanner"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 type ScannerPageProps = {
@@ -206,10 +207,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
                 : `${productName} enviado ao PDV.`,
             })
           } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Não foi possível enviar a leitura para o PDV."
+            const message = parseApiError(error)
 
             setFeedback({
               tone: "error",
@@ -254,10 +252,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
           })
         }
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Não foi possível iniciar a câmera do scanner."
+        const message = parseApiError(error)
 
         setFeedback({
           tone: "error",
@@ -321,10 +316,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
     } catch (error) {
       setFeedback({
         tone: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Não foi possível conectar o scanner.",
+        message: parseApiError(error),
       })
     } finally {
       setIsConnecting(false)

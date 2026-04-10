@@ -6,6 +6,7 @@ import { ArrowRightLeft } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import { formatCentsToBRL } from "@/lib/products"
 import {
   type SaleDetailItem,
@@ -44,6 +45,7 @@ import {
   toSaleReturnMutationInput,
   saleReturnFormSchema,
 } from "@/lib/sale-returns"
+import { toast } from "@/lib/toast"
 
 type SaleReturnDialogProps = {
   saleId: string
@@ -108,7 +110,8 @@ export function SaleReturnDialog({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(
+        throw createApiError(
+          response.status,
           responseData?.error ?? "Não foi possível concluir a devolução."
         )
       }
@@ -118,11 +121,12 @@ export function SaleReturnDialog({
       setStep(1)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível concluir a devolução."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -155,7 +159,8 @@ export function SaleReturnDialog({
             onSubmit={form.handleSubmit(handleConfirm)}
             className="grid gap-4"
           >
-            {step === 1 ? (
+            <fieldset disabled={isSubmitting} className="grid gap-4">
+              {step === 1 ? (
               <div className="grid gap-3">
                 {items.map((item, index) => (
                   <div
@@ -195,9 +200,9 @@ export function SaleReturnDialog({
                   </div>
                 ))}
               </div>
-            ) : null}
+              ) : null}
 
-            {step === 2 ? (
+              {step === 2 ? (
               <div className="grid gap-4">
                 <FormField
                   control={form.control}
@@ -239,9 +244,9 @@ export function SaleReturnDialog({
                   )}
                 />
               </div>
-            ) : null}
+              ) : null}
 
-            {step === 3 ? (
+              {step === 3 ? (
               <div className="space-y-4 rounded-3xl border border-border/70 bg-background/80 p-4">
                 <div>
                   <p className="text-sm font-medium text-foreground">
@@ -278,7 +283,8 @@ export function SaleReturnDialog({
                   </p>
                 </div>
               </div>
-            ) : null}
+              ) : null}
+            </fieldset>
           </form>
         </Form>
 
@@ -310,13 +316,14 @@ export function SaleReturnDialog({
               Próximo
             </Button>
           ) : (
-            <Button
+            <LoadingButton
               type="submit"
               form="sale-return-form"
-              disabled={isSubmitting}
+              isLoading={isSubmitting}
+              loadingLabel="Processando..."
             >
-              {isSubmitting ? "Processando..." : "Confirmar devolução"}
-            </Button>
+              Confirmar devolução
+            </LoadingButton>
           )}
         </DialogFooter>
       </DialogContent>

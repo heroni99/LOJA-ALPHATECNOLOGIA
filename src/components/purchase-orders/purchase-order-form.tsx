@@ -8,6 +8,7 @@ import { Plus, Save, Trash2 } from "lucide-react"
 import { useFieldArray, useForm } from "react-hook-form"
 
 import { FormPage } from "@/components/shared/form-page"
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -27,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   defaultPurchaseOrderFormValues,
   defaultPurchaseOrderItemFormValues,
@@ -38,6 +39,7 @@ import {
   type PurchaseOrderFormValues,
   toPurchaseOrderMutationInput,
 } from "@/lib/purchase-orders"
+import { toast } from "@/lib/toast"
 
 type PurchaseOrderFormProps = {
   mode: "create" | "edit"
@@ -87,7 +89,8 @@ export function PurchaseOrderForm({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(
+        throw createApiError(
+          response.status,
           responseData?.error ?? "Não foi possível salvar o pedido de compra."
         )
       }
@@ -101,11 +104,12 @@ export function PurchaseOrderForm({
       router.push(`/purchase-orders/${responseData.data.id}`)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar o pedido de compra."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -115,6 +119,18 @@ export function PurchaseOrderForm({
     <FormPage
       title={mode === "create" ? "Novo pedido de compra" : "Editar pedido de compra"}
       description="Monte o pedido com fornecedor, itens, quantidades e custo unitário para emissão e posterior recebimento."
+      backHref={
+        mode === "create"
+          ? "/purchase-orders"
+          : `/purchase-orders/${purchaseOrderId}`
+      }
+      breadcrumbs={[
+        { label: "Pedidos de compra", href: "/purchase-orders" },
+        {
+          label:
+            mode === "create" ? "Novo pedido de compra" : "Editar pedido de compra",
+        },
+      ]}
       titleSlot={
         orderNumber ? (
           <span className="rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
@@ -135,10 +151,15 @@ export function PurchaseOrderForm({
               Cancelar
             </Link>
           </Button>
-          <Button type="submit" form="purchase-order-form" disabled={isSaving}>
+          <LoadingButton
+            type="submit"
+            form="purchase-order-form"
+            isLoading={isSaving}
+            loadingLabel="Salvando..."
+          >
             <Save />
-            {isSaving ? "Salvando..." : "Salvar"}
-          </Button>
+            Salvar
+          </LoadingButton>
         </>
       }
     >
@@ -148,7 +169,8 @@ export function PurchaseOrderForm({
           onSubmit={form.handleSubmit(handleSubmit)}
           className="grid gap-6"
         >
-          <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+          <fieldset disabled={isSaving} className="grid gap-6">
+            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
             <CardHeader>
               <CardTitle>Fornecedor e observações</CardTitle>
             </CardHeader>
@@ -196,9 +218,9 @@ export function PurchaseOrderForm({
                 )}
               />
             </CardContent>
-          </Card>
+            </Card>
 
-          <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Itens</CardTitle>
               <Button
@@ -327,7 +349,8 @@ export function PurchaseOrderForm({
                 </div>
               ))}
             </CardContent>
-          </Card>
+            </Card>
+          </fieldset>
         </form>
       </Form>
     </FormPage>

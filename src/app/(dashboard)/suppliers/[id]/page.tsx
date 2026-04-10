@@ -1,7 +1,14 @@
 import Link from "next/link"
-import { Boxes, ClipboardList, PencilLine, ShoppingBag, Truck } from "lucide-react"
+import {
+  BadgeDollarSign,
+  Boxes,
+  ClipboardList,
+  PencilLine,
+  ShoppingBag,
+} from "lucide-react"
 import { notFound } from "next/navigation"
 
+import { DeactivateRecordButton } from "@/components/shared/deactivate-record-button"
 import { ActiveStatusBadge } from "@/components/shared/active-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -13,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getCurrentStoreContext } from "@/lib/products-server"
 import { formatCentsToBRL, formatDateTime } from "@/lib/products"
 import {
+  type SupplierPayable,
   type SupplierProduct,
   type SupplierPurchaseOrder,
 } from "@/lib/suppliers"
@@ -23,6 +31,12 @@ type SupplierDetailPageProps = {
   params: {
     id: string
   }
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+  }).format(new Date(value))
 }
 
 function FieldValue({
@@ -95,6 +109,34 @@ const purchaseOrderColumns: DataTableColumn<SupplierPurchaseOrder>[] = [
   },
 ]
 
+const payableColumns: DataTableColumn<SupplierPayable>[] = [
+  {
+    key: "description",
+    header: "Descrição",
+    cell: (payable) => payable.description,
+    className: "whitespace-normal",
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (payable) => humanizeEnumValue(payable.status),
+  },
+  {
+    key: "amount",
+    header: "Valor",
+    cell: (payable) => formatCentsToBRL(payable.amountCents),
+    className: "text-right",
+    headClassName: "text-right",
+  },
+  {
+    key: "due_date",
+    header: "Vencimento",
+    cell: (payable) => formatDate(payable.dueDate),
+    className: "text-right",
+    headClassName: "text-right",
+  },
+]
+
 export default async function SupplierDetailPage({
   params,
 }: SupplierDetailPageProps) {
@@ -110,21 +152,39 @@ export default async function SupplierDetailPage({
     notFound()
   }
 
-  const { supplier, products, purchaseOrders } = detail
+  const { supplier, products, purchaseOrders, payables } = detail
+  const openPayables = payables.filter(
+    (payable) => !["PAID", "CANCELLED"].includes(payable.status)
+  )
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title={supplier.name}
         titleSlot={<ActiveStatusBadge active={supplier.active} />}
-        description="Consulte o cadastro do fornecedor, produtos vinculados e o histórico de pedidos de compra."
+        description="Consulte o cadastro do fornecedor, produtos vinculados, pedidos de compra e contas a pagar."
+        backHref="/suppliers"
+        breadcrumbs={[
+          { label: "Fornecedores", href: "/suppliers" },
+          { label: supplier.name },
+        ]}
         actions={
-          <Button asChild>
-            <Link href={`/suppliers/${supplier.id}/edit`}>
-              <PencilLine />
-              Editar
-            </Link>
-          </Button>
+          <>
+            <DeactivateRecordButton
+              endpoint={`/api/suppliers/${supplier.id}`}
+              redirectHref="/suppliers"
+              confirmMessage={`Deseja inativar o fornecedor ${supplier.name}?`}
+              successMessage="Fornecedor inativado com sucesso."
+              errorMessage="Não foi possível inativar o fornecedor."
+              label="Inativar"
+            />
+            <Button asChild>
+              <Link href={`/suppliers/${supplier.id}/edit`}>
+                <PencilLine />
+                Editar
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -142,10 +202,10 @@ export default async function SupplierDetailPage({
           icon={<ShoppingBag className="size-5" />}
         />
         <StatCard
-          title="Contato principal"
-          value={supplier.contactName ?? supplier.phone ?? "N/A"}
-          description="Ponto de contato atual do parceiro comercial."
-          icon={<Truck className="size-5" />}
+          title="Contas a pagar"
+          value={String(openPayables.length)}
+          description="Títulos pendentes ou em aberto deste fornecedor."
+          icon={<BadgeDollarSign className="size-5" />}
         />
       </div>
 
@@ -189,7 +249,8 @@ export default async function SupplierDetailPage({
       <Tabs defaultValue="products" className="gap-4">
         <TabsList>
           <TabsTrigger value="products">Produtos</TabsTrigger>
-          <TabsTrigger value="orders">Pedidos</TabsTrigger>
+          <TabsTrigger value="orders">Pedidos de compra</TabsTrigger>
+          <TabsTrigger value="payables">Contas a pagar</TabsTrigger>
         </TabsList>
 
         <TabsContent value="products">
@@ -223,11 +284,33 @@ export default async function SupplierDetailPage({
               columns={purchaseOrderColumns}
               data={purchaseOrders}
               getRowKey={(purchaseOrder) => purchaseOrder.id}
+              getRowHref={(purchaseOrder) => `/purchase-orders/${purchaseOrder.id}`}
               emptyState={
                 <EmptyState
                   icon={ClipboardList}
                   title="Nenhum pedido encontrado."
                   description="Os pedidos de compra vinculados a este fornecedor aparecerão aqui."
+                  className="min-h-56 rounded-none border-0 bg-transparent"
+                />
+              }
+            />
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="payables">
+          <SectionCard
+            title="Contas a pagar"
+            description="Títulos financeiros vinculados a este fornecedor."
+          >
+            <DataTable
+              columns={payableColumns}
+              data={payables}
+              getRowKey={(payable) => payable.id}
+              emptyState={
+                <EmptyState
+                  icon={BadgeDollarSign}
+                  title="Nenhuma conta encontrada."
+                  description="As contas a pagar vinculadas a este fornecedor aparecerão aqui."
                   className="min-h-56 rounded-none border-0 bg-transparent"
                 />
               }

@@ -10,33 +10,59 @@ import { cn } from "@/lib/utils"
 type ProductsApiResponse = {
   data?: {
     id: string
-    internalCode: string
+    internal_code: string
     name: string
-    isService: boolean
   }[]
 }
 
 type ProductAutocompleteProps = {
   value: string
   onChange: (value: string) => void
+  onProductSelect?: (product: InventoryProductOption | null) => void
+  initialProduct?: InventoryProductOption | null
   placeholder?: string
+}
+
+function getProductLabel(product: InventoryProductOption) {
+  return `${product.internalCode} - ${product.name}`
 }
 
 export function ProductAutocomplete({
   value,
   onChange,
+  onProductSelect,
+  initialProduct = null,
   placeholder = "Buscar produto por nome ou código",
 }: ProductAutocompleteProps) {
-  const [search, setSearch] = useState("")
+  const [search, setSearch] = useState(
+    initialProduct ? getProductLabel(initialProduct) : ""
+  )
   const [results, setResults] = useState<InventoryProductOption[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<InventoryProductOption | null>(
+    initialProduct
+  )
   const deferredSearch = useDeferredValue(search)
+
+  useEffect(() => {
+    if (initialProduct && value === initialProduct.id) {
+      setSelectedProduct(initialProduct)
+      setSearch(getProductLabel(initialProduct))
+      return
+    }
+
+    if (!value && selectedProduct) {
+      setSelectedProduct(null)
+      setSearch("")
+      setResults([])
+    }
+  }, [initialProduct, selectedProduct, value])
 
   useEffect(() => {
     const query = deferredSearch.trim()
 
-    if (query.length < 2) {
+    if (query.length < 2 || (selectedProduct && query === getProductLabel(selectedProduct))) {
       setResults([])
       setIsLoading(false)
       return
@@ -45,9 +71,12 @@ export function ProductAutocomplete({
     const controller = new AbortController()
     setIsLoading(true)
 
-    fetch(`/api/products?search=${encodeURIComponent(query)}&active=true`, {
-      signal: controller.signal,
-    })
+    fetch(
+      `/api/products/search?q=${encodeURIComponent(query)}&active=true&is_service=false`,
+      {
+        signal: controller.signal,
+      }
+    )
       .then(async (response) => {
         if (!response.ok) {
           throw new Error("Não foi possível buscar os produtos.")
@@ -55,13 +84,11 @@ export function ProductAutocomplete({
 
         const data = (await response.json()) as ProductsApiResponse
 
-        return (data.data ?? [])
-          .filter((product) => !product.isService)
-          .map((product) => ({
-            id: product.id,
-            internalCode: product.internalCode,
-            name: product.name,
-          }))
+        return (data.data ?? []).map((product) => ({
+          id: product.id,
+          internalCode: product.internal_code,
+          name: product.name,
+        }))
       })
       .then((items) => {
         setResults(items)
@@ -79,13 +106,15 @@ export function ProductAutocomplete({
       })
 
     return () => controller.abort()
-  }, [deferredSearch])
+  }, [deferredSearch, selectedProduct])
 
   function handleSelect(product: InventoryProductOption) {
-    setSearch(`${product.internalCode} - ${product.name}`)
+    setSelectedProduct(product)
+    setSearch(getProductLabel(product))
     setResults([])
     setIsOpen(false)
     onChange(product.id)
+    onProductSelect?.(product)
   }
 
   return (
@@ -106,15 +135,20 @@ export function ProductAutocomplete({
           }
         }}
         onChange={(event) => {
-          setSearch(event.target.value)
-          onChange("")
+          const nextValue = event.target.value
+
+          setSearch(nextValue)
           setIsOpen(true)
+
+          if (selectedProduct || value) {
+            setSelectedProduct(null)
+            onProductSelect?.(null)
+            onChange("")
+          }
         }}
       />
       {value ? (
-        <p className="mt-2 text-xs text-muted-foreground">
-          Produto selecionado.
-        </p>
+        <p className="mt-2 text-xs text-muted-foreground">Produto selecionado.</p>
       ) : null}
       {isOpen && (isLoading || results.length > 0 || deferredSearch.trim().length >= 2) ? (
         <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-3xl border border-border bg-popover shadow-lg ring-1 ring-foreground/5">

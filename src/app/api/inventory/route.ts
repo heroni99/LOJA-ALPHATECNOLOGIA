@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { getCurrentStoreContext } from "@/lib/products-server"
+import {
+  getInventoryApiErrorMessage,
+  toInventoryBalanceRowDto,
+} from "@/lib/inventory-api"
 import { getInventoryListFilters } from "@/lib/inventory"
 import { listInventoryBalances } from "@/lib/inventory-server"
+import { getCurrentStoreContext } from "@/lib/products-server"
 
 export async function GET(request: NextRequest) {
   try {
     const storeContext = await getCurrentStoreContext()
 
     if (!storeContext) {
-      return NextResponse.json(
-        { error: "Usuário não autenticado." },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
     }
 
     const filters = getInventoryListFilters(
@@ -21,24 +22,15 @@ export async function GET(request: NextRequest) {
     const result = await listInventoryBalances(storeContext.storeId, filters)
 
     return NextResponse.json({
-      data: result.items,
-      meta: {
-        page: result.page,
-        pageSize: result.pageSize,
-        totalCount: result.totalCount,
-        totalPages: result.totalPages,
-        lowStockCount: result.lowStockCount,
-        filters,
-      },
+      data: result.items.map(toInventoryBalanceRowDto),
+      total: result.totalCount,
+      page: result.page,
+      limit: result.pageSize,
+      low_stock_total: result.lowStockCount,
     })
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Não foi possível listar os saldos de estoque.",
-      },
+      { error: getInventoryApiErrorMessage(error) },
       { status: 500 }
     )
   }

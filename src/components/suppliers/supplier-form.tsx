@@ -8,8 +8,10 @@ import { Save } from "lucide-react"
 import { type Control, useForm } from "react-hook-form"
 
 import { FormPage } from "@/components/shared/form-page"
+import { FormSection } from "@/components/shared/form-section"
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Form,
   FormControl,
@@ -21,7 +23,8 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
+import { toast } from "@/lib/toast"
 import {
   defaultSupplierFormValues,
   supplierFormSchema,
@@ -35,7 +38,7 @@ type SupplierFormProps = {
   supplierId?: string
 }
 
-function BooleanField({
+function ToggleField({
   control,
   name,
   label,
@@ -51,18 +54,31 @@ function BooleanField({
       control={control}
       name={name}
       render={({ field }) => (
-        <FormItem className="flex items-start justify-between gap-4 rounded-3xl border border-border/70 bg-background/80 p-4">
+        <FormItem className="flex items-start justify-between gap-4 rounded-3xl border border-border/70 bg-background/70 p-4">
           <div className="space-y-1">
             <FormLabel>{label}</FormLabel>
             <FormDescription>{description}</FormDescription>
           </div>
           <FormControl>
-            <input
-              type="checkbox"
-              checked={field.value}
-              onChange={(event) => field.onChange(event.target.checked)}
-              className="mt-1 size-4 rounded border-border accent-primary"
-            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={field.value}
+              onClick={() => field.onChange(!field.value)}
+              className={[
+                "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors",
+                field.value
+                  ? "border-primary bg-primary"
+                  : "border-border bg-muted",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "inline-block size-5 rounded-full bg-white transition-transform",
+                  field.value ? "translate-x-6" : "translate-x-1",
+                ].join(" ")}
+              />
+            </button>
           </FormControl>
         </FormItem>
       )}
@@ -100,7 +116,10 @@ export function SupplierForm({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(responseData?.error ?? "Não foi possível salvar o fornecedor.")
+        throw createApiError(
+          response.status,
+          responseData?.error ?? "Não foi possível salvar o fornecedor."
+        )
       }
 
       toast.success(
@@ -112,11 +131,12 @@ export function SupplierForm({
       router.push(`/suppliers/${responseData.data.id}`)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível salvar o fornecedor."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -127,20 +147,28 @@ export function SupplierForm({
       title={mode === "create" ? "Novo fornecedor" : "Editar fornecedor"}
       description={
         mode === "create"
-          ? "Cadastre um parceiro comercial com dados fiscais, contato, endereço e observações."
-          : "Atualize o cadastro do fornecedor mantendo histórico e vínculo com produtos e pedidos."
+          ? "Cadastre dados fiscais, contato, endereço e observações do parceiro comercial."
+          : "Atualize o cadastro do fornecedor preservando produtos, pedidos e contas vinculadas."
       }
+      backHref={mode === "create" ? "/suppliers" : `/suppliers/${supplierId}`}
+      breadcrumbs={[
+        { label: "Fornecedores", href: "/suppliers" },
+        { label: mode === "create" ? "Novo fornecedor" : "Editar fornecedor" },
+      ]}
       footer={
         <>
           <Button variant="outline" asChild>
-            <Link href={mode === "create" ? "/suppliers" : `/suppliers/${supplierId}`}>
-              Cancelar
-            </Link>
+            <Link href="/suppliers">Cancelar</Link>
           </Button>
-          <Button type="submit" form="supplier-form" disabled={isSaving}>
+          <LoadingButton
+            type="submit"
+            form="supplier-form"
+            isLoading={isSaving}
+            loadingLabel="Salvando..."
+          >
             <Save />
-            {isSaving ? "Salvando..." : "Salvar"}
-          </Button>
+            Salvar
+          </LoadingButton>
         </>
       }
     >
@@ -150,182 +178,183 @@ export function SupplierForm({
           onSubmit={form.handleSubmit(handleSubmit)}
           className="grid gap-6"
         >
-          <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
-            <CardHeader>
-              <CardTitle>Dados</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem className="md:col-span-2 xl:col-span-2">
-                    <FormLabel>Nome *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Ex.: PMCELL São Paulo" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="trade_name"
-                render={({ field }) => (
-                  <FormItem className="md:col-span-2 xl:col-span-2">
-                    <FormLabel>Razão social</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Razão social da empresa" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="cnpj"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>CNPJ</FormLabel>
-                    <FormControl>
-                      <Input placeholder="00.000.000/0001-00" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>E-mail</FormLabel>
-                    <FormControl>
-                      <Input placeholder="contato@fornecedor.com" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="phone"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Telefone</FormLabel>
-                    <FormControl>
-                      <Input placeholder="(11) 99999-9999" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="contact_name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Contato</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Nome do contato comercial" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          <fieldset disabled={isSaving} className="grid gap-6">
+            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+            <CardContent className="pt-6">
+              <FormSection title="Dados">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>Nome *</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Ex.: PMCELL São Paulo" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="trade_name"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>Razão social</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Razão social da empresa" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="cnpj"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>CNPJ</FormLabel>
+                      <FormControl>
+                        <Input placeholder="00.000.000/0001-00" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>E-mail</FormLabel>
+                      <FormControl>
+                        <Input placeholder="contato@fornecedor.com" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Telefone</FormLabel>
+                      <FormControl>
+                        <Input placeholder="(11) 99999-9999" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="contact_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Contato</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Nome do contato comercial" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </FormSection>
             </CardContent>
-          </Card>
+            </Card>
 
-          <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
-            <CardHeader>
-              <CardTitle>Endereço</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <FormField
-                control={form.control}
-                name="zip_code"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>CEP</FormLabel>
-                    <FormControl>
-                      <Input placeholder="00000-000" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="address"
-                render={({ field }) => (
-                  <FormItem className="md:col-span-2 xl:col-span-3">
-                    <FormLabel>Endereço</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Rua, número, complemento" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="city"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Cidade</FormLabel>
-                    <FormControl>
-                      <Input placeholder="São Paulo" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="state"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Estado</FormLabel>
-                    <FormControl>
-                      <Input placeholder="SP" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+            <CardContent className="pt-6">
+              <FormSection title="Endereço">
+                <FormField
+                  control={form.control}
+                  name="zip_code"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>CEP</FormLabel>
+                      <FormControl>
+                        <Input placeholder="00000-000" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="address"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>Endereço</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Rua, número, complemento" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="city"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Cidade</FormLabel>
+                      <FormControl>
+                        <Input placeholder="São Paulo" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="state"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Estado</FormLabel>
+                      <FormControl>
+                        <Input placeholder="SP" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </FormSection>
             </CardContent>
-          </Card>
+            </Card>
 
-          <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
-            <CardHeader>
-              <CardTitle>Outros</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 xl:grid-cols-2">
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Observações</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder="Prazos, condições comerciais, informações internas..."
-                        className="min-h-40"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <BooleanField
-                control={form.control}
-                name="active"
-                label="Fornecedor ativo"
-                description="Fornecedores inativos saem dos fluxos operacionais, mas o histórico comercial permanece."
-              />
+            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+            <CardContent className="pt-6">
+              <FormSection title="Outros">
+                <FormField
+                  control={form.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>Observações</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Prazos, condições comerciais e observações internas."
+                          className="min-h-32"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="md:col-span-2">
+                  <ToggleField
+                    control={form.control}
+                    name="active"
+                    label="Fornecedor ativo"
+                    description="Fornecedores inativos saem dos fluxos operacionais, mas o histórico comercial permanece."
+                  />
+                </div>
+              </FormSection>
             </CardContent>
-          </Card>
+            </Card>
+          </fieldset>
         </form>
       </Form>
     </FormPage>

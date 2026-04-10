@@ -6,6 +6,7 @@ import {
   type CashCloseMutationInput,
   type CashCurrentSession,
   type CashMovement,
+  type CashSessionMovementSummary,
   type CashSummary,
   type CashSupplyMutationInput,
   type CashWithdrawalMutationInput,
@@ -22,7 +23,7 @@ type CashTerminalRecord = {
 type CashSessionRecord = {
   id: string
   cash_terminal_id: string
-  opened_by: string
+  opened_by: string | null
   closed_by: string | null
   status: string
   opening_amount: number | string | null
@@ -45,24 +46,21 @@ type CashMovementRecord = {
   amount: number | string | null
   payment_method: string | null
   description: string | null
-  user_id: string
+  user_id: string | null
   created_at: string
   profiles?: { id: string; name: string | null } | { id: string; name: string | null }[] | null
-}
-
-type SaleRecord = {
-  id: string
-  total: number | string | null
-}
-
-type SalePaymentRecord = {
-  sale_id: string
-  amount: number | string | null
 }
 
 type CashMovementTotalRecord = {
   movement_type: string
   amount: number | string | null
+}
+
+type CashCloseRpcResult = {
+  session_id: string
+  expected_amount: number | string | null
+  closing_amount: number | string | null
+  difference: number | string | null
 }
 
 type CashCloseResult = {
@@ -78,12 +76,54 @@ type CashDashboardData = {
   movements: CashMovement[]
 }
 
+type CashCurrentSessionPayload = {
+  session: CashCurrentSession
+  summary: CashSummary
+}
+
+type DatabaseErrorLike = {
+  code?: string
+  message?: string
+  details?: string | null
+  hint?: string | null
+}
+
 function getSingleRelation<T>(value: T | T[] | null | undefined) {
   if (Array.isArray(value)) {
     return value[0] ?? null
   }
 
   return value ?? null
+}
+
+function isDatabaseErrorLike(error: unknown): error is DatabaseErrorLike {
+  return typeof error === "object" && error !== null
+}
+
+function normalizeCashError(error: unknown) {
+  if (!isDatabaseErrorLike(error)) {
+    return error
+  }
+
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ")
+
+  if (
+    error.code === "PGRST202" ||
+    /Could not find the function public\.cash_/i.test(message)
+  ) {
+    return new Error(
+      "As funções de caixa não estão instaladas no banco. Execute `supabase/cash.sql` no Supabase antes de usar este módulo."
+    )
+  }
+
+  if (
+    error.code === "23514" &&
+    /cash_movements_amount_check/i.test(message)
+  ) {
+    return new Error("O valor do movimento de caixa é inválido.")
+  }
+
+  return new Error(error.message ?? "Não foi possível processar a operação de caixa.")
 }
 
 function mapCashMovement(record: CashMovementRecord): CashMovement {
@@ -111,6 +151,7 @@ function mapCashSession(
     terminalName,
     openedByUserId: record.opened_by,
     operatorName,
+    openedAutomatically: record.opened_by === null,
     status: record.status,
     openingAmountCents: parseDbMoneyToCents(record.opening_amount),
     expectedAmountCents: parseDbMoneyToCents(record.expected_amount),
@@ -123,6 +164,65 @@ function mapCashSession(
     openedAt: record.opened_at,
     closedAt: record.closed_at,
     notes: record.notes,
+  }
+}
+
+function buildMovementSummary(
+  session: CashCurrentSession,
+  movementTotals: CashMovementTotalRecord[]
+): CashSessionMovementSummary {
+  const totalSalesCents = movementTotals
+    .filter((movement) => movement.movement_type === "SALE")
+    .reduce((total, movement) => total + parseDbMoneyToCents(movement.amount), 0)
+  const salesCount = movementTotals.filter(
+    (movement) => movement.movement_type === "SALE"
+  ).length
+  const suppliesCents = movementTotals
+    .filter((movement) => movement.movement_type === "SUPPLY")
+    .reduce((total, movement) => total + parseDbMoneyToCents(movement.amount), 0)
+  const withdrawalsCents = movementTotals
+    .filter((movement) => movement.movement_type === "WITHDRAWAL")
+    .reduce((total, movement) => total + parseDbMoneyToCents(movement.amount), 0)
+  const refundsCents = movementTotals
+    .filter((movement) => movement.movement_type === "REFUND")
+    .reduce((total, movement) => total + parseDbMoneyToCents(movement.amount), 0)
+
+  return {
+    totalSalesCents,
+    salesCount,
+    suppliesCents,
+    withdrawalsCents,
+    refundsCents,
+    expectedAmountCents:
+      session.openingAmountCents +
+      totalSalesCents +
+      suppliesCents -
+      withdrawalsCents -
+      refundsCents,
+  }
+}
+
+function toCashSummary(
+  sessionId: string,
+  summary: CashSessionMovementSummary
+): CashSummary {
+  return {
+    sessionId,
+    totalSalesCents: summary.totalSalesCents,
+    salesCount: summary.salesCount,
+    suppliesCents: summary.suppliesCents,
+    withdrawalsCents: summary.withdrawalsCents,
+    expectedAmountCents: summary.expectedAmountCents,
+  }
+}
+
+function applySummaryToSession(
+  session: CashCurrentSession,
+  summary: CashSessionMovementSummary
+): CashCurrentSession {
+  return {
+    ...session,
+    expectedAmountCents: summary.expectedAmountCents,
   }
 }
 
@@ -142,7 +242,11 @@ async function listStoreCashTerminals(storeId: string) {
   return (data ?? []) as CashTerminalRecord[]
 }
 
-async function getProfileName(profileId: string) {
+async function getProfileName(profileId: string | null) {
+  if (!profileId) {
+    return "Sistema"
+  }
+
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
     .from("profiles")
@@ -161,77 +265,6 @@ async function getStoreTerminalMap(storeId: string) {
   const terminals = await listStoreCashTerminals(storeId)
 
   return new Map(terminals.map((terminal) => [terminal.id, terminal]))
-}
-
-async function getOperationalCashTerminal(storeId: string) {
-  const terminals = await listStoreCashTerminals(storeId)
-  const activeTerminal = terminals.find((terminal) => terminal.active)
-
-  if (activeTerminal) {
-    return activeTerminal
-  }
-
-  const firstTerminal = terminals[0]
-
-  if (firstTerminal) {
-    const supabase = await createClient({ serviceRole: true })
-    const { data, error } = await supabase
-      .from("cash_terminals")
-      .update({ active: true })
-      .eq("id", firstTerminal.id)
-      .select("id, name, active, created_at")
-      .single()
-
-    if (error) {
-      throw error
-    }
-
-    return data as CashTerminalRecord
-  }
-
-  const supabase = await createClient({ serviceRole: true })
-  const { data, error } = await supabase
-    .from("cash_terminals")
-    .insert({
-      store_id: storeId,
-      name: "Caixa Principal",
-      active: true,
-    })
-    .select("id, name, active, created_at")
-    .single()
-
-  if (error) {
-    throw error
-  }
-
-  return data as CashTerminalRecord
-}
-
-async function getOpenCashSessionRecord(storeId: string) {
-  const supabase = await createClient({ serviceRole: true })
-  const terminals = await listStoreCashTerminals(storeId)
-
-  if (terminals.length === 0) {
-    return null
-  }
-
-  const terminalIds = terminals.map((terminal) => terminal.id)
-  const { data, error } = await supabase
-    .from("cash_sessions")
-    .select(
-      "id, cash_terminal_id, opened_by, closed_by, status, opening_amount, expected_amount, closing_amount, difference, opened_at, closed_at, notes"
-    )
-    .in("cash_terminal_id", terminalIds)
-    .eq("status", "OPEN")
-    .order("opened_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    throw error
-  }
-
-  return data as CashSessionRecord | null
 }
 
 async function getCashSessionById(sessionId: string, storeId: string) {
@@ -267,76 +300,18 @@ async function getCashSessionById(sessionId: string, storeId: string) {
   return mapCashSession(data as CashSessionRecord, terminalName, operatorName)
 }
 
-async function createAutomaticCashSession(storeId: string, userId: string) {
-  const terminal = await getOperationalCashTerminal(storeId)
+async function getCashMovementTotalsBySession(sessionId: string) {
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
-    .from("cash_sessions")
-    .insert({
-      cash_terminal_id: terminal.id,
-      opened_by: userId,
-      status: "OPEN",
-      opening_amount: 0,
-      expected_amount: 0,
-      notes: "Abertura automática do sistema",
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    throw error
-  }
-
-  const session = await getCashSessionById(data.id, storeId)
-
-  if (!session) {
-    throw new Error("Não foi possível criar a sessão de caixa.")
-  }
-
-  return session
-}
-
-async function getSessionSalesData(sessionId: string) {
-  const supabase = await createClient({ serviceRole: true })
-  const { data, error } = await supabase
-    .from("sales")
-    .select("id, total")
+    .from("cash_movements")
+    .select("movement_type, amount")
     .eq("cash_session_id", sessionId)
-    .in("status", ["COMPLETED", "PARTIALLY_REFUNDED"])
 
   if (error) {
     throw error
   }
 
-  const sales = (data ?? []) as SaleRecord[]
-  const saleIds = sales.map((sale) => sale.id)
-  let cashSalesCents = 0
-
-  if (saleIds.length > 0) {
-    const paymentsResult = await supabase
-      .from("sale_payments")
-      .select("sale_id, amount")
-      .in("sale_id", saleIds)
-      .eq("method", "CASH")
-
-    if (paymentsResult.error) {
-      throw paymentsResult.error
-    }
-
-    cashSalesCents = ((paymentsResult.data ?? []) as SalePaymentRecord[]).reduce(
-      (total, payment) => total + parseDbMoneyToCents(payment.amount),
-      0
-    )
-  }
-
-  return {
-    salesCount: sales.length,
-    totalSalesCents: sales.reduce(
-      (total, sale) => total + parseDbMoneyToCents(sale.total),
-      0
-    ),
-    cashSalesCents,
-  }
+  return (data ?? []) as CashMovementTotalRecord[]
 }
 
 async function listCashMovementsBySession(sessionId: string) {
@@ -357,90 +332,56 @@ async function listCashMovementsBySession(sessionId: string) {
   return ((data ?? []) as CashMovementRecord[]).map(mapCashMovement)
 }
 
-async function getCashMovementTotalsBySession(sessionId: string) {
-  const supabase = await createClient({ serviceRole: true })
-  const { data, error } = await supabase
-    .from("cash_movements")
-    .select("movement_type, amount")
-    .eq("cash_session_id", sessionId)
+async function buildCashSummary(session: CashCurrentSession): Promise<CashSummary> {
+  const movementTotals = await getCashMovementTotalsBySession(session.id)
+  const summary = buildMovementSummary(session, movementTotals)
 
-  if (error) {
-    throw error
-  }
-
-  return (data ?? []) as CashMovementTotalRecord[]
+  return toCashSummary(session.id, summary)
 }
 
-async function buildCashSummary(session: CashCurrentSession): Promise<CashSummary> {
-  const [salesData, movementTotals] = await Promise.all([
-    getSessionSalesData(session.id),
-    getCashMovementTotalsBySession(session.id),
-  ])
-
-  const suppliesCents = movementTotals
-    .filter((movement) => movement.movement_type === "SUPPLY")
-    .reduce((total, movement) => total + parseDbMoneyToCents(movement.amount), 0)
-  const withdrawalsCents = movementTotals
-    .filter((movement) => movement.movement_type === "WITHDRAWAL")
-    .reduce((total, movement) => total + parseDbMoneyToCents(movement.amount), 0)
+async function getCurrentCashSessionPayload(
+  storeId: string,
+  userId: string
+): Promise<CashCurrentSessionPayload> {
+  const session = await getOrCreateCurrentCashSession(storeId, userId)
+  const movementTotals = await getCashMovementTotalsBySession(session.id)
+  const summary = buildMovementSummary(session, movementTotals)
 
   return {
-    sessionId: session.id,
-    totalSalesCents: salesData.totalSalesCents,
-    salesCount: salesData.salesCount,
-    suppliesCents,
-    withdrawalsCents,
-    expectedAmountCents:
-      session.openingAmountCents +
-      salesData.cashSalesCents +
-      suppliesCents -
-      withdrawalsCents,
+    session: applySummaryToSession(session, summary),
+    summary: toCashSummary(session.id, summary),
   }
 }
 
-function mergeSessionNotes(
-  existingNotes: string | null | undefined,
-  closingNotes: string | null | undefined
-) {
-  const existing = normalizeOptionalString(existingNotes)
-  const closing = normalizeOptionalString(closingNotes)
+export async function getOrCreateCurrentCashSession(storeId: string, _userId: string) {
+  void _userId
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase.rpc("cash_get_or_create_current_session", {
+    p_store_id: storeId,
+  })
 
-  if (!existing) {
-    return closing
+  if (error) {
+    throw normalizeCashError(error)
   }
 
-  if (!closing) {
-    return existing
+  const sessionId = String(data)
+  const session = await getCashSessionById(sessionId, storeId)
+
+  if (!session) {
+    throw new Error("Não foi possível carregar a sessão atual do caixa.")
   }
 
-  return `${existing}\n\nFechamento: ${closing}`
+  return session
 }
 
-function normalizeOptionalString(value: string | null | undefined) {
-  const normalized = value?.trim() ?? ""
-
-  return normalized.length > 0 ? normalized : null
-}
-
-export async function getOrCreateCurrentCashSession(storeId: string, userId: string) {
-  const existingSession = await getOpenCashSessionRecord(storeId)
-
-  if (existingSession) {
-    const terminalMap = await getStoreTerminalMap(storeId)
-    const operatorName = await getProfileName(existingSession.opened_by)
-    const terminalName =
-      terminalMap.get(existingSession.cash_terminal_id)?.name ?? "Caixa Principal"
-
-    return mapCashSession(existingSession, terminalName, operatorName)
-  }
-
-  return createAutomaticCashSession(storeId, userId)
+export async function getCurrentCashSessionWithSummary(storeId: string, userId: string) {
+  return getCurrentCashSessionPayload(storeId, userId)
 }
 
 export async function getCurrentCashSummary(storeId: string, userId: string) {
-  const session = await getOrCreateCurrentCashSession(storeId, userId)
+  const payload = await getCurrentCashSessionPayload(storeId, userId)
 
-  return buildCashSummary(session)
+  return payload.summary
 }
 
 export async function getCurrentCashMovements(storeId: string, userId: string) {
@@ -453,15 +394,12 @@ export async function getCashDashboardData(
   storeId: string,
   userId: string
 ): Promise<CashDashboardData> {
-  const session = await getOrCreateCurrentCashSession(storeId, userId)
-  const [summary, movements] = await Promise.all([
-    buildCashSummary(session),
-    listCashMovementsBySession(session.id),
-  ])
+  const payload = await getCurrentCashSessionPayload(storeId, userId)
+  const movements = await listCashMovementsBySession(payload.session.id)
 
   return {
-    session,
-    summary,
+    session: payload.session,
+    summary: payload.summary,
     movements,
   }
 }
@@ -480,7 +418,7 @@ export async function createCashSupply(
       movement_type: "SUPPLY",
       amount: input.amount,
       payment_method: "CASH",
-      description: input.description,
+      description: input.description ?? null,
       user_id: userId,
     })
     .select("id")
@@ -512,7 +450,7 @@ export async function createCashWithdrawal(
       movement_type: "WITHDRAWAL",
       amount: input.amount,
       payment_method: "CASH",
-      description: input.description,
+      description: input.reason,
       user_id: userId,
     })
     .select("id")
@@ -535,31 +473,28 @@ export async function closeCurrentCashSession(
   userId: string,
   input: CashCloseMutationInput
 ): Promise<CashCloseResult> {
-  const session = await getOrCreateCurrentCashSession(storeId, userId)
-  const summary = await buildCashSummary(session)
-  const differenceCents = input.closing_amount - summary.expectedAmountCents
   const supabase = await createClient({ serviceRole: true })
-  const { error } = await supabase
-    .from("cash_sessions")
-    .update({
-      status: "CLOSED",
-      expected_amount: summary.expectedAmountCents,
-      closing_amount: input.closing_amount,
-      difference: differenceCents,
-      closed_by: userId,
-      closed_at: new Date().toISOString(),
-      notes: mergeSessionNotes(session.notes, input.notes),
-    })
-    .eq("id", session.id)
+  const { data, error } = await supabase.rpc("cash_close_current_session", {
+    p_store_id: storeId,
+    p_user_id: userId,
+    p_closing_amount: input.closing_amount,
+    p_notes: input.notes ?? null,
+  })
 
   if (error) {
-    throw error
+    throw normalizeCashError(error)
+  }
+
+  const result = data as CashCloseRpcResult | null
+
+  if (!result) {
+    throw new Error("Não foi possível fechar a sessão atual do caixa.")
   }
 
   return {
-    sessionId: session.id,
-    expectedAmountCents: summary.expectedAmountCents,
-    closingAmountCents: input.closing_amount,
-    differenceCents,
+    sessionId: result.session_id,
+    expectedAmountCents: parseDbMoneyToCents(result.expected_amount),
+    closingAmountCents: parseDbMoneyToCents(result.closing_amount),
+    differenceCents: parseDbMoneyToCents(result.difference),
   }
 }

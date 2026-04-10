@@ -1,8 +1,10 @@
 import Link from "next/link"
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   MapPin,
   Package,
   PackageCheck,
@@ -18,10 +20,8 @@ import { SectionCard } from "@/components/shared/section-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  formatLocationBalanceSummary,
   formatQuantity,
   getInventoryListFilters,
-  getVisibleLocationBalances,
   type InventoryBalanceRow,
 } from "@/lib/inventory"
 import { listInventoryBalances, listStockLocations } from "@/lib/inventory-server"
@@ -40,6 +40,10 @@ function buildPageHref(
 ) {
   const params = new URLSearchParams()
 
+  if (filters.search) {
+    params.set("search", filters.search)
+  }
+
   if (filters.locationId) {
     params.set("location_id", filters.locationId)
   }
@@ -48,8 +52,8 @@ function buildPageHref(
     params.set("category_id", filters.categoryId)
   }
 
-  if (filters.belowMin) {
-    params.set("below_min", "true")
+  if (filters.lowStock) {
+    params.set("low_stock", "true")
   }
 
   if (page > 1) {
@@ -59,6 +63,18 @@ function buildPageHref(
   const query = params.toString()
 
   return query ? `/inventory?${query}` : "/inventory"
+}
+
+function StockStatusBadge({ lowStock }: { lowStock: boolean }) {
+  return lowStock ? (
+    <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+      Abaixo do mínimo
+    </Badge>
+  ) : (
+    <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+      OK
+    </Badge>
+  )
 }
 
 export default async function InventoryPage({
@@ -77,10 +93,7 @@ export default async function InventoryPage({
     listInventoryBalances(storeContext.storeId, filters),
   ])
 
-  const locationNameById = new Map(
-    locations.map((location) => [location.id, location.name])
-  )
-
+  const quantityHeader = filters.locationId ? "Saldo no local" : "Estoque total"
   const inventoryColumns: DataTableColumn<InventoryBalanceRow>[] = [
     {
       key: "internal_code",
@@ -90,17 +103,10 @@ export default async function InventoryPage({
       ),
     },
     {
-      key: "product",
-      header: "Produto",
-      cell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-medium text-foreground">{row.productName}</span>
-          <span className="text-xs text-muted-foreground">
-            {row.categoryName ?? "Sem categoria"}
-          </span>
-        </div>
-      ),
-      className: "whitespace-normal",
+      key: "name",
+      header: "Nome",
+      cell: (row) => row.productName,
+      className: "whitespace-normal font-medium text-foreground",
     },
     {
       key: "category",
@@ -108,23 +114,23 @@ export default async function InventoryPage({
       cell: (row) => row.categoryName ?? "Sem categoria",
     },
     {
-      key: "balances",
-      header: "Saldo por local",
-      cell: (row) => (
-        <span className="text-sm text-muted-foreground">
-          {formatLocationBalanceSummary(
-            getVisibleLocationBalances(row, filters.locationId, locationNameById)
-          )}
-        </span>
-      ),
-      className: "whitespace-normal",
+      key: "stock_total",
+      header: quantityHeader,
+      cell: (row) => formatQuantity(row.displayQuantity),
+      className: "text-right font-semibold",
+      headClassName: "text-right",
     },
     {
-      key: "minimum",
+      key: "stock_min",
       header: "Mínimo",
       cell: (row) => formatQuantity(row.stockMin),
       className: "text-right",
       headClassName: "text-right",
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (row) => <StockStatusBadge lowStock={row.isBelowMin} />,
     },
   ]
 
@@ -137,13 +143,19 @@ export default async function InventoryPage({
             <AlertTriangle />
             {balances.lowStockCount}{" "}
             {balances.lowStockCount === 1
-              ? "item abaixo do mínimo"
-              : "itens abaixo do mínimo"}
+              ? "produto abaixo do mínimo"
+              : "produtos abaixo do mínimo"}
           </Badge>
         }
-        description="Acompanhe o saldo consolidado por produto, filtre por local ou categoria e destaque rapidamente os itens abaixo do estoque mínimo."
+        subtitle="Acompanhe o saldo por produto e local, destaque itens críticos e navegue para ajustes e movimentações."
         actions={
           <>
+            <Button variant="outline" asChild>
+              <Link href="/inventory/movements">
+                <ClipboardList />
+                Movimentações
+              </Link>
+            </Button>
             <Button variant="outline" asChild>
               <Link href="/stock-locations">
                 <MapPin />
@@ -158,7 +170,7 @@ export default async function InventoryPage({
             </Button>
             <Button variant="outline" asChild>
               <Link href="/inventory/transfer">
-                <Package />
+                <ArrowLeftRight />
                 Transferência
               </Link>
             </Button>
@@ -174,20 +186,21 @@ export default async function InventoryPage({
 
       <SectionCard
         title="Filtros"
-        description="Refine a visão por local, categoria e itens abaixo do mínimo operacional."
+        description="Busque por nome ou código e refine por local, categoria e itens abaixo do mínimo."
       >
         <InventoryFilters
-          locations={locations}
+          locations={locations.filter((location) => location.active)}
           categories={categories}
+          currentSearch={filters.search}
           currentLocationId={filters.locationId}
           currentCategoryId={filters.categoryId}
-          currentBelowMin={filters.belowMin}
+          currentLowStock={filters.lowStock}
         />
       </SectionCard>
 
       <SectionCard
-        title="Saldos por produto"
-        description="Linhas em destaque indicam produtos com saldo consolidado abaixo do mínimo definido no cadastro."
+        title="Saldos"
+        description="Linhas em destaque indicam produtos com saldo abaixo do mínimo operacional."
       >
         <DataTable
           columns={inventoryColumns}

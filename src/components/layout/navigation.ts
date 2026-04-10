@@ -96,6 +96,12 @@ export const navigationGroups: NavigationGroup[] = [
         icon: ArrowLeftRight,
       },
       {
+        href: "/inventory/movements",
+        label: "Movimentações",
+        description: "Histórico do estoque.",
+        icon: ClipboardList,
+      },
+      {
         href: "/units",
         label: "Unidades",
         description: "Controle de IMEI e seriais.",

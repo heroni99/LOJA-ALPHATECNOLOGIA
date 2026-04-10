@@ -17,6 +17,7 @@ type CustomerRecord = {
   id: string
   name: string
   phone: string | null
+  phone2: string | null
   email: string | null
   cpf_cnpj: string | null
   zip_code: string | null
@@ -27,6 +28,27 @@ type CustomerRecord = {
   active: boolean
   created_at: string
   updated_at: string
+}
+
+type SaleRecord = {
+  id: string
+  sale_number: string
+}
+
+type ServiceOrderRecord = {
+  id: string
+  order_number: string
+}
+
+type ReceivableRecord = {
+  id: string
+  description: string
+  amount: number | string | null
+  due_date: string
+  status: string
+  received_at: string | null
+  sale_id: string | null
+  service_order_id: string | null
 }
 
 type ListCustomersResult = {
@@ -44,13 +66,14 @@ type CustomerFullDetail = {
   receivables: CustomerReceivable[]
 }
 
-function mapCustomerSummary(record: CustomerRecord): CustomerSummary {
+function mapCustomerSummary(record: Pick<CustomerRecord, "id" | "name" | "phone" | "cpf_cnpj" | "city" | "state" | "active">): CustomerSummary {
   return {
     id: record.id,
     name: record.name,
     phone: record.phone,
     cpfCnpj: record.cpf_cnpj,
     city: record.city,
+    state: record.state,
     active: record.active,
   }
 }
@@ -60,6 +83,7 @@ function mapCustomerDetail(record: CustomerRecord): CustomerDetail {
     id: record.id,
     name: record.name,
     phone: record.phone,
+    phone2: record.phone2,
     email: record.email,
     cpfCnpj: record.cpf_cnpj,
     zipCode: record.zip_code,
@@ -73,18 +97,57 @@ function mapCustomerDetail(record: CustomerRecord): CustomerDetail {
   }
 }
 
+async function listSalesByIds(storeId: string, ids: string[]) {
+  if (ids.length === 0) {
+    return new Map<string, SaleRecord>()
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("sales")
+    .select("id, sale_number")
+    .eq("store_id", storeId)
+    .in("id", ids)
+
+  if (error) {
+    throw error
+  }
+
+  return new Map(((data ?? []) as SaleRecord[]).map((sale) => [sale.id, sale]))
+}
+
+async function listServiceOrdersByIds(storeId: string, ids: string[]) {
+  if (ids.length === 0) {
+    return new Map<string, ServiceOrderRecord>()
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("service_orders")
+    .select("id, order_number")
+    .eq("store_id", storeId)
+    .in("id", ids)
+
+  if (error) {
+    throw error
+  }
+
+  return new Map(((data ?? []) as ServiceOrderRecord[]).map((order) => [order.id, order]))
+}
+
 export async function listCustomers(
   storeId: string,
   filters: CustomerListFilters
 ): Promise<ListCustomersResult> {
   const supabase = await createClient({ serviceRole: true })
+  const pageSize = filters.limit || CUSTOMERS_PAGE_SIZE
   const buildQuery = (page: number) => {
-    const from = (page - 1) * CUSTOMERS_PAGE_SIZE
-    const to = from + CUSTOMERS_PAGE_SIZE - 1
+    const from = (page - 1) * pageSize
+    const to = from + pageSize - 1
 
     let query = supabase
       .from("customers")
-      .select("id, name, phone, cpf_cnpj, city, active, created_at, updated_at", {
+      .select("id, name, phone, cpf_cnpj, city, state, active", {
         count: "exact",
       })
       .eq("store_id", storeId)
@@ -95,7 +158,7 @@ export async function listCustomers(
       const sanitized = filters.search.replace(/[(),]/g, " ").trim()
 
       query = query.or(
-        `name.ilike.%${sanitized}%,phone.ilike.%${sanitized}%,cpf_cnpj.ilike.%${sanitized}%`
+        `name.ilike.%${sanitized}%,phone.ilike.%${sanitized}%,phone2.ilike.%${sanitized}%,cpf_cnpj.ilike.%${sanitized}%`
       )
     }
 
@@ -116,7 +179,7 @@ export async function listCustomers(
   }
 
   const totalCount = totalCountResult ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalCount / CUSTOMERS_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const currentPage = Math.min(filters.page, totalPages)
 
   if ((data?.length ?? 0) === 0 && totalCount > 0 && currentPage !== filters.page) {
@@ -131,11 +194,13 @@ export async function listCustomers(
   }
 
   return {
-    items: ((data ?? []) as CustomerRecord[]).map(mapCustomerSummary),
+    items: ((data ?? []) as Array<
+      Pick<CustomerRecord, "id" | "name" | "phone" | "cpf_cnpj" | "city" | "state" | "active">
+    >).map(mapCustomerSummary),
     totalCount,
     totalPages,
     page: currentPage,
-    pageSize: CUSTOMERS_PAGE_SIZE,
+    pageSize,
   }
 }
 
@@ -144,7 +209,7 @@ export async function getCustomerById(customerId: string, storeId: string) {
   const { data, error } = await supabase
     .from("customers")
     .select(
-      "id, name, phone, email, cpf_cnpj, zip_code, address, city, state, notes, active, created_at, updated_at"
+      "id, name, phone, phone2, email, cpf_cnpj, zip_code, address, city, state, notes, active, created_at, updated_at"
     )
     .eq("store_id", storeId)
     .eq("id", customerId)
@@ -234,7 +299,27 @@ export async function getCustomerReceivables(
     throw error
   }
 
-  return (data ?? []).map((receivable) => ({
+  const receivables = (data ?? []) as ReceivableRecord[]
+  const saleIds = Array.from(
+    new Set(
+      receivables
+        .map((item) => item.sale_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  )
+  const serviceOrderIds = Array.from(
+    new Set(
+      receivables
+        .map((item) => item.service_order_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  )
+  const [salesMap, serviceOrdersMap] = await Promise.all([
+    listSalesByIds(storeId, saleIds),
+    listServiceOrdersByIds(storeId, serviceOrderIds),
+  ])
+
+  return receivables.map((receivable) => ({
     id: receivable.id,
     description: receivable.description,
     amountCents: parseDbMoneyToCents(receivable.amount),
@@ -242,7 +327,13 @@ export async function getCustomerReceivables(
     status: receivable.status,
     receivedAt: receivable.received_at,
     saleId: receivable.sale_id,
+    saleNumber: receivable.sale_id
+      ? salesMap.get(receivable.sale_id)?.sale_number ?? null
+      : null,
     serviceOrderId: receivable.service_order_id,
+    serviceOrderNumber: receivable.service_order_id
+      ? serviceOrdersMap.get(receivable.service_order_id)?.order_number ?? null
+      : null,
   }))
 }
 
@@ -323,4 +414,21 @@ export async function updateCustomer(
   }
 
   return getCustomerById(customerId, storeId)
+}
+
+export async function softDeleteCustomer(customerId: string, storeId: string) {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("customers")
+    .update({ active: false })
+    .eq("store_id", storeId)
+    .eq("id", customerId)
+    .select("id")
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return Boolean(data)
 }

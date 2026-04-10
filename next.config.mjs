@@ -12,7 +12,16 @@ function getSupabaseHost() {
 }
 
 const SUPABASE_HOST = getSupabaseHost()
-const IMAGE_DOMAINS = [...new Set([DEFAULT_SUPABASE_HOST, SUPABASE_HOST])]
+const IMAGE_REMOTE_PATTERNS = [
+  {
+    protocol: "https",
+    hostname: "**.supabase.co",
+  },
+  {
+    protocol: "https",
+    hostname: SUPABASE_HOST,
+  },
+]
 
 const securityHeaders = [
   {
@@ -43,7 +52,7 @@ const securityHeaders = [
 
 const nextConfig = {
   images: {
-    domains: IMAGE_DOMAINS,
+    remotePatterns: IMAGE_REMOTE_PATTERNS,
   },
   async headers() {
     return [

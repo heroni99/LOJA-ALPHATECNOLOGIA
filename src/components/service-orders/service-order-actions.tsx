@@ -6,6 +6,7 @@ import { ClipboardCheck, PackageCheck, ThumbsDown, ThumbsUp, Wrench } from "luci
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   defaultServiceOrderDiagnosisFormValues,
   formatServiceOrderCurrencyInput,
@@ -38,6 +39,7 @@ import {
   toServiceOrderDiagnosisUpdateInput,
   toServiceOrderStatusChangeInput,
 } from "@/lib/service-orders"
+import { toast } from "@/lib/toast"
 
 type ServiceOrderActionsProps = {
   serviceOrder: Pick<
@@ -85,15 +87,21 @@ export function ServiceOrderActions({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(responseData?.error ?? "Não foi possível atualizar a OS.")
+        throw createApiError(
+          response.status,
+          responseData?.error ?? "Não foi possível atualizar a OS."
+        )
       }
 
       toast.success("Status da OS atualizado com sucesso.")
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Não foi possível atualizar a OS."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSubmitting(null)
     }
@@ -113,7 +121,10 @@ export function ServiceOrderActions({
       const patchData = await patchResponse.json().catch(() => null)
 
       if (!patchResponse.ok) {
-        throw new Error(patchData?.error ?? "Não foi possível salvar o diagnóstico.")
+        throw createApiError(
+          patchResponse.status,
+          patchData?.error ?? "Não foi possível salvar o diagnóstico."
+        )
       }
 
       const statusResponse = await fetch(
@@ -134,7 +145,8 @@ export function ServiceOrderActions({
       const statusData = await statusResponse.json().catch(() => null)
 
       if (!statusResponse.ok) {
-        throw new Error(
+        throw createApiError(
+          statusResponse.status,
           statusData?.error ?? "Não foi possível mover a OS para aprovação."
         )
       }
@@ -143,11 +155,12 @@ export function ServiceOrderActions({
       setDiagnosisOpen(false)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível registrar o diagnóstico."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSubmitting(null)
     }
@@ -177,102 +190,104 @@ export function ServiceOrderActions({
               onSubmit={diagnosisForm.handleSubmit(handleDiagnosisSubmit)}
               className="grid gap-4"
             >
-              <FormField
-                control={diagnosisForm.control}
-                name="found_issue"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Diagnóstico *</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        {...field}
-                        className="min-h-28"
-                        placeholder="Descreva o defeito encontrado pela equipe técnica."
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={diagnosisForm.control}
-                name="technical_notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notas técnicas</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        {...field}
-                        className="min-h-24"
-                        placeholder="Testes realizados, observações internas e cuidados necessários."
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <div className="grid gap-4 md:grid-cols-2">
+              <fieldset disabled={isSubmitting === "WAITING_APPROVAL"} className="grid gap-4">
                 <FormField
                   control={diagnosisForm.control}
-                  name="estimated_completion_date"
+                  name="found_issue"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Prazo estimado</FormLabel>
+                      <FormLabel>Diagnóstico *</FormLabel>
                       <FormControl>
-                        <Input {...field} type="date" />
+                        <Textarea
+                          {...field}
+                          className="min-h-28"
+                          placeholder="Descreva o defeito encontrado pela equipe técnica."
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={diagnosisForm.control}
-                  name="total_estimated"
+                  name="technical_notes"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Orçamento *</FormLabel>
+                      <FormLabel>Notas técnicas</FormLabel>
                       <FormControl>
-                        <div className="relative">
-                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                            R$
-                          </span>
-                          <Input
-                            value={field.value}
-                            className="pl-10"
-                            inputMode="numeric"
-                            onChange={(event) =>
-                              field.onChange(
-                                formatServiceOrderCurrencyInput(event.target.value)
-                              )
-                            }
-                          />
-                        </div>
+                        <Textarea
+                          {...field}
+                          className="min-h-24"
+                          placeholder="Testes realizados, observações internas e cuidados necessários."
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              </div>
 
-              <FormField
-                control={diagnosisForm.control}
-                name="status_notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Observação do histórico</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        {...field}
-                        className="min-h-24"
-                        placeholder="Mensagem opcional para registrar na timeline."
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FormField
+                    control={diagnosisForm.control}
+                    name="estimated_completion_date"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Prazo estimado</FormLabel>
+                        <FormControl>
+                          <Input {...field} type="date" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={diagnosisForm.control}
+                    name="total_estimated"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Orçamento *</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                              R$
+                            </span>
+                            <Input
+                              value={field.value}
+                              className="pl-10"
+                              inputMode="numeric"
+                              onChange={(event) =>
+                                field.onChange(
+                                  formatServiceOrderCurrencyInput(event.target.value)
+                                )
+                              }
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={diagnosisForm.control}
+                  name="status_notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Observação do histórico</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          className="min-h-24"
+                          placeholder="Mensagem opcional para registrar na timeline."
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </fieldset>
             </form>
           </Form>
 
@@ -280,15 +295,14 @@ export function ServiceOrderActions({
             <Button variant="outline" onClick={() => setDiagnosisOpen(false)}>
               Cancelar
             </Button>
-            <Button
+            <LoadingButton
               type="submit"
               form="service-order-diagnosis-form"
-              disabled={isSubmitting === "WAITING_APPROVAL"}
+              isLoading={isSubmitting === "WAITING_APPROVAL"}
+              loadingLabel="Salvando..."
             >
-              {isSubmitting === "WAITING_APPROVAL"
-                ? "Salvando..."
-                : "Salvar diagnóstico"}
-            </Button>
+              Salvar diagnóstico
+            </LoadingButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -330,17 +344,18 @@ export function ServiceOrderActions({
               <Button variant="outline" onClick={() => setRejectOpen(false)}>
                 Cancelar
               </Button>
-              <Button
+              <LoadingButton
                 variant="destructive"
-                disabled={isSubmitting === "REJECTED"}
+                isLoading={isSubmitting === "REJECTED"}
+                loadingLabel="Rejeitando..."
                 onClick={async () => {
                   await handleStatusChange("REJECTED", rejectNotes)
                   setRejectOpen(false)
                   setRejectNotes("")
                 }}
               >
-                {isSubmitting === "REJECTED" ? "Rejeitando..." : "Confirmar"}
-              </Button>
+                Confirmar
+              </LoadingButton>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -1,7 +1,8 @@
 import { MapPin } from "lucide-react"
 import { notFound } from "next/navigation"
 
-import { StockLocationsInlineForm } from "@/components/inventory/stock-locations-inline-form"
+import { StockLocationCreateDialog } from "@/components/inventory/stock-location-create-dialog"
+import { StockLocationInlineEditor } from "@/components/inventory/stock-locations-inline-form"
 import { ActiveStatusBadge } from "@/components/shared/active-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -43,6 +44,12 @@ const locationColumns: DataTableColumn<InventoryLocationOption>[] = [
     header: "Ativo",
     cell: (location) => <ActiveStatusBadge active={location.active} />,
   },
+  {
+    key: "actions",
+    header: "Ações",
+    cell: (location) => <StockLocationInlineEditor location={location} />,
+    className: "w-[280px] align-top",
+  },
 ]
 
 export default async function StockLocationsPage() {
@@ -58,19 +65,13 @@ export default async function StockLocationsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Locais de estoque"
-        description="Cadastre e mantenha os pontos físicos de armazenagem, separação e operação do estoque."
+        subtitle="Cadastre e mantenha os pontos físicos de armazenagem, separação e operação do estoque. Locais inativos continuam no histórico, mas deixam de aceitar novas entradas, ajustes e transferências."
+        actions={<StockLocationCreateDialog />}
       />
 
       <SectionCard
-        title="Novo local"
-        description="Crie um novo local inline e, se necessário, defina-o como padrão da loja."
-      >
-        <StockLocationsInlineForm />
-      </SectionCard>
-
-      <SectionCard
         title="Locais cadastrados"
-        description="Visualize os locais disponíveis para entradas, ajustes e transferências."
+        description="Edite nome, descrição, local padrão e status diretamente na listagem. Apenas um local pode permanecer como padrão por loja."
       >
         <DataTable
           columns={locationColumns}

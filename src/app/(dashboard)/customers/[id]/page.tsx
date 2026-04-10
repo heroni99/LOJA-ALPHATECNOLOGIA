@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 import { notFound } from "next/navigation"
 
+import { DeactivateRecordButton } from "@/components/shared/deactivate-record-button"
 import { ActiveStatusBadge } from "@/components/shared/active-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -159,7 +160,8 @@ export default async function CustomerDetailPage({
 
   const { customer, sales, serviceOrders, receivables } = detail
   const openReceivables = receivables.filter(
-    (receivable) => receivable.status !== "RECEIVED"
+    (receivable) =>
+      !["RECEIVED", "CANCELLED"].includes(receivable.status)
   )
 
   return (
@@ -168,13 +170,28 @@ export default async function CustomerDetailPage({
         title={customer.name}
         titleSlot={<ActiveStatusBadge active={customer.active} />}
         description="Consulte contato, endereço e o histórico de compras, ordens de serviço e contas deste cliente."
+        backHref="/customers"
+        breadcrumbs={[
+          { label: "Clientes", href: "/customers" },
+          { label: customer.name },
+        ]}
         actions={
-          <Button asChild>
-            <Link href={`/customers/${customer.id}/edit`}>
-              <PencilLine />
-              Editar
-            </Link>
-          </Button>
+          <>
+            <DeactivateRecordButton
+              endpoint={`/api/customers/${customer.id}`}
+              redirectHref="/customers"
+              confirmMessage={`Deseja inativar o cliente ${customer.name}?`}
+              successMessage="Cliente inativado com sucesso."
+              errorMessage="Não foi possível inativar o cliente."
+              label="Inativar"
+            />
+            <Button asChild>
+              <Link href={`/customers/${customer.id}/edit`}>
+                <PencilLine />
+                Editar
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -206,6 +223,7 @@ export default async function CustomerDetailPage({
         >
           <div className="grid gap-4 md:grid-cols-2">
             <FieldValue label="Telefone" value={customer.phone} />
+            <FieldValue label="Telefone 2" value={customer.phone2} />
             <FieldValue label="E-mail" value={customer.email} />
             <FieldValue label="CPF/CNPJ" value={customer.cpfCnpj} />
             <FieldValue label="Atualizado em" value={formatDateTime(customer.updatedAt)} />
@@ -237,8 +255,8 @@ export default async function CustomerDetailPage({
       <Tabs defaultValue="sales" className="gap-4">
         <TabsList>
           <TabsTrigger value="sales">Compras</TabsTrigger>
-          <TabsTrigger value="service-orders">OS</TabsTrigger>
-          <TabsTrigger value="receivables">Contas</TabsTrigger>
+          <TabsTrigger value="service-orders">Ordens de serviço</TabsTrigger>
+          <TabsTrigger value="receivables">Contas a receber</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sales">
@@ -250,6 +268,7 @@ export default async function CustomerDetailPage({
               columns={salesColumns}
               data={sales}
               getRowKey={(sale) => sale.id}
+              getRowHref={(sale) => `/sales/${sale.id}`}
               emptyState={
                 <EmptyState
                   icon={PackageSearch}
@@ -271,6 +290,7 @@ export default async function CustomerDetailPage({
               columns={serviceOrderColumns}
               data={serviceOrders}
               getRowKey={(serviceOrder) => serviceOrder.id}
+              getRowHref={(serviceOrder) => `/service-orders/${serviceOrder.id}`}
               emptyState={
                 <EmptyState
                   icon={ShieldCheck}

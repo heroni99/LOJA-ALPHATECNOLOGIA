@@ -5,6 +5,8 @@ import { LogOut, Menu } from "lucide-react"
 import { usePathname, useRouter } from "next/navigation"
 
 import { getNavigationItem } from "@/components/layout/navigation"
+import { parseApiError } from "@/lib/api-error"
+import { toast } from "@/lib/toast"
 import {
   Avatar,
   AvatarFallback,
@@ -12,7 +14,6 @@ import {
 } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/toast"
 import { createClient } from "@/lib/supabase/client"
 import { isSupabaseConfigured } from "@/lib/supabase/env"
 
@@ -61,7 +62,7 @@ export function Topbar({
     const { error } = await supabase.auth.signOut()
 
     if (error) {
-      toast.error("Não foi possível encerrar a sessão.")
+      toast.error(parseApiError(error))
       return
     }
 

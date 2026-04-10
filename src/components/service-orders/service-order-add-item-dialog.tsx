@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 
 import { ProductAutocomplete } from "@/components/inventory/product-autocomplete"
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   defaultServiceOrderItemFormValues,
   formatServiceOrderCurrencyInput,
@@ -35,6 +36,7 @@ import {
   type ServiceOrderItemFormValues,
   toServiceOrderItemMutationInput,
 } from "@/lib/service-orders"
+import { toast } from "@/lib/toast"
 
 type ServiceOrderAddItemDialogProps = {
   serviceOrderId: string
@@ -68,7 +70,10 @@ export function ServiceOrderAddItemDialog({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(responseData?.error ?? "Não foi possível adicionar a peça.")
+        throw createApiError(
+          response.status,
+          responseData?.error ?? "Não foi possível adicionar a peça."
+        )
       }
 
       toast.success("Peça adicionada e estoque consumido com sucesso.")
@@ -76,9 +81,12 @@ export function ServiceOrderAddItemDialog({
       form.reset(defaultServiceOrderItemFormValues)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Não foi possível adicionar a peça."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -106,38 +114,18 @@ export function ServiceOrderAddItemDialog({
             onSubmit={form.handleSubmit(handleSubmit)}
             className="grid gap-4"
           >
-            <FormField
-              control={form.control}
-              name="product_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Peça *</FormLabel>
-                  <FormControl>
-                    <ProductAutocomplete
-                      value={field.value}
-                      onChange={field.onChange}
-                      placeholder="Buscar peça por nome ou código"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="grid gap-4 md:grid-cols-2">
+            <fieldset disabled={isSaving} className="grid gap-4">
               <FormField
                 control={form.control}
-                name="quantity"
+                name="product_id"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Quantidade *</FormLabel>
+                    <FormLabel>Peça *</FormLabel>
                     <FormControl>
-                      <Input
-                        {...field}
-                        type="number"
-                        min="0.001"
-                        step="0.001"
-                        inputMode="decimal"
+                      <ProductAutocomplete
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Buscar peça por nome ou código"
                       />
                     </FormControl>
                     <FormMessage />
@@ -145,52 +133,74 @@ export function ServiceOrderAddItemDialog({
                 )}
               />
 
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="quantity"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Quantidade *</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          inputMode="decimal"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="unit_price"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Valor unitário *</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                            R$
+                          </span>
+                          <Input
+                            value={field.value}
+                            className="pl-10"
+                            inputMode="numeric"
+                            onChange={(event) =>
+                              field.onChange(
+                                formatServiceOrderCurrencyInput(event.target.value)
+                              )
+                            }
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
               <FormField
                 control={form.control}
-                name="unit_price"
+                name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Valor unitário *</FormLabel>
+                    <FormLabel>Descrição</FormLabel>
                     <FormControl>
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                          R$
-                        </span>
-                        <Input
-                          value={field.value}
-                          className="pl-10"
-                          inputMode="numeric"
-                          onChange={(event) =>
-                            field.onChange(
-                              formatServiceOrderCurrencyInput(event.target.value)
-                            )
-                          }
-                        />
-                      </div>
+                      <Textarea
+                        {...field}
+                        className="min-h-28"
+                        placeholder="Opcional. Se vazio, o sistema usa o nome da peça."
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
-
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Descrição</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      className="min-h-28"
-                      placeholder="Opcional. Se vazio, o sistema usa o nome da peça."
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            </fieldset>
           </form>
         </Form>
 
@@ -198,13 +208,14 @@ export function ServiceOrderAddItemDialog({
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancelar
           </Button>
-          <Button
+          <LoadingButton
             type="submit"
             form="service-order-item-form"
-            disabled={isSaving}
+            isLoading={isSaving}
+            loadingLabel="Adicionando..."
           >
-            {isSaving ? "Adicionando..." : "Confirmar"}
-          </Button>
+            Confirmar
+          </LoadingButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 
-import { getOrCreateCurrentCashSession } from "@/lib/cash-server"
+import { getCurrentCashSessionWithSummary } from "@/lib/cash-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
 
 function getValidationMessage(error: unknown) {
@@ -19,12 +19,15 @@ export async function GET() {
       return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
     }
 
-    const session = await getOrCreateCurrentCashSession(
+    const { session, summary } = await getCurrentCashSessionWithSummary(
       storeContext.storeId,
       storeContext.userId
     )
 
-    return NextResponse.json({ data: session })
+    return NextResponse.json({
+      data: session,
+      summary,
+    })
   } catch (error) {
     return NextResponse.json(
       { error: getValidationMessage(error) },

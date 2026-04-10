@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 
+import {
+  getInventoryApiErrorMessage,
+  toInventoryMovementDto,
+} from "@/lib/inventory-api"
 import { getInventoryMovementsFilters } from "@/lib/inventory"
 import { listInventoryMovements } from "@/lib/inventory-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
@@ -9,10 +13,7 @@ export async function GET(request: NextRequest) {
     const storeContext = await getCurrentStoreContext()
 
     if (!storeContext) {
-      return NextResponse.json(
-        { error: "Usuário não autenticado." },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
     }
 
     const filters = getInventoryMovementsFilters(
@@ -21,23 +22,14 @@ export async function GET(request: NextRequest) {
     const result = await listInventoryMovements(storeContext.storeId, filters)
 
     return NextResponse.json({
-      data: result.items,
-      meta: {
-        page: result.page,
-        pageSize: result.pageSize,
-        totalCount: result.totalCount,
-        totalPages: result.totalPages,
-        filters,
-      },
+      data: result.items.map(toInventoryMovementDto),
+      total: result.totalCount,
+      page: result.page,
+      limit: result.pageSize,
     })
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Não foi possível listar as movimentações.",
-      },
+      { error: getInventoryApiErrorMessage(error) },
       { status: 500 }
     )
   }

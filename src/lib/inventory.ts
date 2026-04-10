@@ -11,6 +11,21 @@ import {
 export const INVENTORY_PAGE_SIZE = 10
 export const INVENTORY_MOVEMENTS_PAGE_SIZE = 20
 
+export const inventoryMovementTypes = [
+  "IN",
+  "OUT",
+  "ADJUSTMENT_POSITIVE",
+  "ADJUSTMENT_NEGATIVE",
+  "TRANSFER_IN",
+  "TRANSFER_OUT",
+  "SALE",
+  "PURCHASE",
+  "RETURN_IN",
+  "RETURN_OUT",
+  "SERVICE_CONSUMPTION",
+  "SERVICE_RETURN",
+] as const
+
 export type SearchParamsLike = Record<string, string | string[] | undefined>
 
 export type InventoryLocationOption = {
@@ -41,6 +56,7 @@ export type InventoryBalanceRow = {
   categoryName: string | null
   stockMin: number
   totalQuantity: number
+  displayQuantity: number
   isBelowMin: boolean
   locationBalances: InventoryLocationBalance[]
 }
@@ -61,18 +77,32 @@ export type InventoryMovement = {
   userName: string | null
 }
 
+export type InventoryStockBalanceSnapshot = {
+  id: string | null
+  productId: string
+  locationId: string
+  quantity: number
+  updatedAt: string | null
+}
+
 export type InventoryListFilters = {
+  productId: string | null
   locationId: string | null
   categoryId: string | null
-  belowMin: boolean
+  search: string
+  lowStock: boolean
   page: number
+  limit: number
 }
 
 export type InventoryMovementsFilters = {
   productId: string | null
   locationId: string | null
   movementType: string | null
+  dateStart: string | null
+  dateEnd: string | null
   page: number
+  limit: number
 }
 
 export const inventoryEntryMutationSchema = z.object({
@@ -89,9 +119,7 @@ export const inventoryEntryMutationSchema = z.object({
 export const inventoryAdjustmentMutationSchema = z.object({
   product_id: z.string().uuid("Selecione um produto."),
   location_id: z.string().uuid("Selecione um local."),
-  new_quantity: z
-    .number()
-    .min(0, "A quantidade nova não pode ser negativa."),
+  new_quantity: z.number().min(0, "A quantidade nova não pode ser negativa."),
   reason: z
     .string()
     .trim()
@@ -107,34 +135,21 @@ export const inventoryTransferMutationSchema = z
     quantity: z.number().positive("Informe uma quantidade maior que zero."),
     notes: z.string().trim().max(1000).nullable().optional(),
   })
-  .refine(
-    (value) => value.from_location_id !== value.to_location_id,
-    {
-      message: "Os locais de origem e destino precisam ser diferentes.",
-      path: ["to_location_id"],
-    }
-  )
+  .refine((value) => value.from_location_id !== value.to_location_id, {
+    message: "Os locais de origem e destino precisam ser diferentes.",
+    path: ["to_location_id"],
+  })
 
 export const stockLocationMutationSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Informe o nome do local.")
-    .max(120),
+  name: z.string().trim().min(1, "Informe o nome do local.").max(120),
   description: z.string().trim().max(255).nullable().optional(),
   is_default: z.boolean().default(false),
   active: z.boolean().default(true),
 })
 
-export type InventoryEntryMutationInput = z.infer<
-  typeof inventoryEntryMutationSchema
->
-export type InventoryAdjustmentMutationInput = z.infer<
-  typeof inventoryAdjustmentMutationSchema
->
-export type InventoryTransferMutationInput = z.infer<
-  typeof inventoryTransferMutationSchema
->
+export type InventoryEntryMutationInput = z.infer<typeof inventoryEntryMutationSchema>
+export type InventoryAdjustmentMutationInput = z.infer<typeof inventoryAdjustmentMutationSchema>
+export type InventoryTransferMutationInput = z.infer<typeof inventoryTransferMutationSchema>
 export type StockLocationMutationInput = z.infer<typeof stockLocationMutationSchema>
 
 export const inventoryEntryFormSchema = z.object({
@@ -147,13 +162,7 @@ export const inventoryEntryFormSchema = z.object({
     .refine((value) => parseQuantityInput(value) > 0, {
       message: "Informe uma quantidade maior que zero.",
     }),
-  unit_cost: z
-    .string()
-    .trim()
-    .min(1, "Informe o custo unitário.")
-    .refine((value) => parseCurrencyInputToCents(value) >= 0, {
-      message: "Informe um custo válido.",
-    }),
+  unit_cost: z.number().int("Informe um custo válido.").min(0, "Informe um custo válido."),
   notes: z.string().optional(),
 })
 
@@ -167,10 +176,7 @@ export const inventoryAdjustmentFormSchema = z.object({
     .refine((value) => parseQuantityInput(value) >= 0, {
       message: "Informe uma quantidade válida.",
     }),
-  reason: z
-    .string()
-    .trim()
-    .min(1, "Informe o motivo do ajuste."),
+  reason: z.string().trim().min(1, "Informe o motivo do ajuste."),
 })
 
 export const inventoryTransferFormSchema = z
@@ -187,48 +193,37 @@ export const inventoryTransferFormSchema = z
       }),
     notes: z.string().optional(),
   })
-  .refine(
-    (value) => value.from_location_id !== value.to_location_id,
-    {
-      message: "Os locais de origem e destino precisam ser diferentes.",
-      path: ["to_location_id"],
-    }
-  )
+  .refine((value) => value.from_location_id !== value.to_location_id, {
+    message: "Os locais de origem e destino precisam ser diferentes.",
+    path: ["to_location_id"],
+  })
 
 export const stockLocationFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Informe o nome do local."),
+  name: z.string().trim().min(1, "Informe o nome do local."),
   description: z.string().optional(),
   is_default: z.boolean(),
   active: z.boolean(),
 })
 
 export type InventoryEntryFormValues = z.infer<typeof inventoryEntryFormSchema>
-export type InventoryAdjustmentFormValues = z.infer<
-  typeof inventoryAdjustmentFormSchema
->
-export type InventoryTransferFormValues = z.infer<
-  typeof inventoryTransferFormSchema
->
+export type InventoryAdjustmentFormValues = z.infer<typeof inventoryAdjustmentFormSchema>
+export type InventoryTransferFormValues = z.infer<typeof inventoryTransferFormSchema>
 export type StockLocationFormValues = z.infer<typeof stockLocationFormSchema>
 
 export const defaultInventoryEntryFormValues: InventoryEntryFormValues = {
   product_id: "",
   location_id: "",
   quantity: "1",
-  unit_cost: "0,00",
+  unit_cost: 0,
   notes: "",
 }
 
-export const defaultInventoryAdjustmentFormValues: InventoryAdjustmentFormValues =
-  {
-    product_id: "",
-    location_id: "",
-    new_quantity: "0",
-    reason: "",
-  }
+export const defaultInventoryAdjustmentFormValues: InventoryAdjustmentFormValues = {
+  product_id: "",
+  location_id: "",
+  new_quantity: "0",
+  reason: "",
+}
 
 export const defaultInventoryTransferFormValues: InventoryTransferFormValues = {
   product_id: "",
@@ -255,12 +250,22 @@ export function getInventoryListFilters(
   }
 
   const page = Number.parseInt(getValue("page") ?? "1", 10)
+  const limit = Number.parseInt(getValue("limit") ?? String(INVENTORY_PAGE_SIZE), 10)
 
   return {
+    productId: (getValue("product_id") ?? "").trim() || null,
     locationId: (getValue("location_id") ?? "").trim() || null,
     categoryId: (getValue("category_id") ?? "").trim() || null,
-    belowMin: parseBooleanFilter(getValue("below_min")) ?? false,
+    search: (getValue("search") ?? "").trim(),
+    lowStock:
+      parseBooleanFilter(getValue("low_stock")) ??
+      parseBooleanFilter(getValue("below_min")) ??
+      false,
     page: Number.isFinite(page) && page > 0 ? page : 1,
+    limit:
+      Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.max(limit, 1), 100)
+        : INVENTORY_PAGE_SIZE,
   }
 }
 
@@ -274,12 +279,23 @@ export function getInventoryMovementsFilters(
   }
 
   const page = Number.parseInt(getValue("page") ?? "1", 10)
+  const limit = Number.parseInt(
+    getValue("limit") ?? String(INVENTORY_MOVEMENTS_PAGE_SIZE),
+    10
+  )
+  const movementType = (getValue("type") ?? getValue("movement_type") ?? "").trim()
 
   return {
     productId: (getValue("product_id") ?? "").trim() || null,
     locationId: (getValue("location_id") ?? "").trim() || null,
-    movementType: (getValue("movement_type") ?? "").trim() || null,
+    movementType: movementType || null,
+    dateStart: (getValue("date_start") ?? "").trim() || null,
+    dateEnd: (getValue("date_end") ?? "").trim() || null,
     page: Number.isFinite(page) && page > 0 ? page : 1,
+    limit:
+      Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.max(limit, 1), 100)
+        : INVENTORY_MOVEMENTS_PAGE_SIZE,
   }
 }
 
@@ -310,7 +326,7 @@ export function toInventoryEntryMutationInput(
     product_id: parsed.product_id,
     location_id: parsed.location_id,
     quantity: parseQuantityInput(parsed.quantity),
-    unit_cost: parseCurrencyInputToCents(parsed.unit_cost),
+    unit_cost: parsed.unit_cost,
     notes: normalizeOptionalString(parsed.notes),
   }
 }
@@ -371,21 +387,23 @@ export function getVisibleLocationBalances(
   return [
     {
       locationId,
-      locationName: matchedBalance?.locationName ?? locationNameById?.get(locationId) ?? null,
+      locationName:
+        matchedBalance?.locationName ?? locationNameById?.get(locationId) ?? null,
       quantity: matchedBalance?.quantity ?? 0,
     },
   ]
 }
 
-export function formatLocationBalanceSummary(
-  balances: InventoryLocationBalance[]
-) {
+export function formatLocationBalanceSummary(balances: InventoryLocationBalance[]) {
   if (balances.length === 0) {
     return "Sem saldo"
   }
 
   return balances
-    .map((balance) => `${balance.locationName ?? "Sem local"}: ${formatQuantity(balance.quantity)}`)
+    .map(
+      (balance) =>
+        `${balance.locationName ?? "Sem local"}: ${formatQuantity(balance.quantity)}`
+    )
     .join(" | ")
 }
 
@@ -393,10 +411,33 @@ export function formatInventoryCurrencyInput(value: string) {
   return maskCurrencyInput(value)
 }
 
-export {
-  formatCentsToBRL,
-  formatQuantity,
+export function getInventoryMovementTypeOptions() {
+  return inventoryMovementTypes.map((type) => ({
+    value: type,
+    label: getInventoryMovementTypeLabel(type),
+  }))
 }
+
+export function getInventoryMovementTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    IN: "Entrada manual",
+    OUT: "Saída manual",
+    ADJUSTMENT_POSITIVE: "Ajuste positivo",
+    ADJUSTMENT_NEGATIVE: "Ajuste negativo",
+    TRANSFER_IN: "Transferência recebida",
+    TRANSFER_OUT: "Transferência enviada",
+    SALE: "Venda",
+    PURCHASE: "Compra",
+    RETURN_IN: "Retorno de devolução",
+    RETURN_OUT: "Devolução",
+    SERVICE_CONSUMPTION: "Consumo em OS",
+    SERVICE_RETURN: "Retorno de OS",
+  }
+
+  return labels[type] ?? type
+}
+
+export { formatCentsToBRL, formatQuantity, parseCurrencyInputToCents }
 
 function normalizeOptionalString(value: string | null | undefined) {
   const normalized = value?.trim() ?? ""

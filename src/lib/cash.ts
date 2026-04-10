@@ -3,18 +3,26 @@ import { z } from "zod"
 import {
   formatCentsToBRL,
   formatDateTime,
-  maskCurrencyInput,
-  parseCurrencyInputToCents,
 } from "@/lib/products"
 
-export const CASH_RECENT_MOVEMENTS_LIMIT = 20
+export const CASH_RECENT_MOVEMENTS_LIMIT = 30
+
+export type CashSessionMovementSummary = {
+  totalSalesCents: number
+  salesCount: number
+  suppliesCents: number
+  withdrawalsCents: number
+  refundsCents: number
+  expectedAmountCents: number
+}
 
 export type CashCurrentSession = {
   id: string
   cashTerminalId: string
   terminalName: string
-  openedByUserId: string
+  openedByUserId: string | null
   operatorName: string
+  openedAutomatically: boolean
   status: string
   openingAmountCents: number
   expectedAmountCents: number
@@ -52,8 +60,9 @@ export const cashSupplyMutationSchema = z.object({
   description: z
     .string()
     .trim()
-    .min(1, "Informe a descrição do suprimento.")
-    .max(500),
+    .max(500)
+    .nullable()
+    .optional(),
 })
 
 export const cashWithdrawalMutationSchema = z.object({
@@ -61,7 +70,7 @@ export const cashWithdrawalMutationSchema = z.object({
     .number()
     .int("Informe um valor válido.")
     .positive("Informe um valor maior que zero."),
-  description: z
+  reason: z
     .string()
     .trim()
     .min(1, "Informe o motivo da sangria.")
@@ -83,41 +92,17 @@ export type CashWithdrawalMutationInput = z.infer<
 export type CashCloseMutationInput = z.infer<typeof cashCloseMutationSchema>
 
 export const cashSupplyFormSchema = z.object({
-  amount: z
-    .string()
-    .trim()
-    .min(1, "Informe o valor do suprimento.")
-    .refine((value) => parseCurrencyInputToCents(value) > 0, {
-      message: "Informe um valor maior que zero.",
-    }),
-  description: z
-    .string()
-    .trim()
-    .min(1, "Informe a descrição do suprimento."),
+  amount: z.number().int("Informe um valor válido.").positive("Informe um valor maior que zero."),
+  description: z.string().trim().max(500).optional(),
 })
 
 export const cashWithdrawalFormSchema = z.object({
-  amount: z
-    .string()
-    .trim()
-    .min(1, "Informe o valor da sangria.")
-    .refine((value) => parseCurrencyInputToCents(value) > 0, {
-      message: "Informe um valor maior que zero.",
-    }),
-  description: z
-    .string()
-    .trim()
-    .min(1, "Informe o motivo da sangria."),
+  amount: z.number().int("Informe um valor válido.").positive("Informe um valor maior que zero."),
+  reason: z.string().trim().min(1, "Informe o motivo da sangria."),
 })
 
 export const cashCloseFormSchema = z.object({
-  closing_amount: z
-    .string()
-    .trim()
-    .min(1, "Informe o valor contado.")
-    .refine((value) => parseCurrencyInputToCents(value) >= 0, {
-      message: "Informe um valor válido.",
-    }),
+  closing_amount: z.number().int("Informe um valor válido.").min(0, "O valor contado não pode ser negativo."),
   notes: z.string().optional(),
 })
 
@@ -126,17 +111,17 @@ export type CashWithdrawalFormValues = z.infer<typeof cashWithdrawalFormSchema>
 export type CashCloseFormValues = z.infer<typeof cashCloseFormSchema>
 
 export const defaultCashSupplyFormValues: CashSupplyFormValues = {
-  amount: "0,00",
+  amount: 0,
   description: "",
 }
 
 export const defaultCashWithdrawalFormValues: CashWithdrawalFormValues = {
-  amount: "0,00",
-  description: "",
+  amount: 0,
+  reason: "",
 }
 
 export const defaultCashCloseFormValues: CashCloseFormValues = {
-  closing_amount: "0,00",
+  closing_amount: 0,
   notes: "",
 }
 
@@ -146,8 +131,8 @@ export function toCashSupplyMutationInput(
   const parsed = cashSupplyFormSchema.parse(values)
 
   return {
-    amount: parseCurrencyInputToCents(parsed.amount),
-    description: parsed.description.trim(),
+    amount: parsed.amount,
+    description: normalizeOptionalString(parsed.description),
   }
 }
 
@@ -157,8 +142,8 @@ export function toCashWithdrawalMutationInput(
   const parsed = cashWithdrawalFormSchema.parse(values)
 
   return {
-    amount: parseCurrencyInputToCents(parsed.amount),
-    description: parsed.description.trim(),
+    amount: parsed.amount,
+    reason: parsed.reason.trim(),
   }
 }
 
@@ -168,13 +153,9 @@ export function toCashCloseMutationInput(
   const parsed = cashCloseFormSchema.parse(values)
 
   return {
-    closing_amount: parseCurrencyInputToCents(parsed.closing_amount),
+    closing_amount: parsed.closing_amount,
     notes: normalizeOptionalString(parsed.notes),
   }
-}
-
-export function formatCashCurrencyInput(value: string) {
-  return maskCurrencyInput(value)
 }
 
 export function getCashMovementLabel(movementType: string) {
@@ -191,12 +172,12 @@ export function getCashMovementLabel(movementType: string) {
   return labels[movementType] ?? movementType
 }
 
-export function formatElapsedTime(value: string) {
-  const diffMs = Math.max(0, Date.now() - new Date(value).getTime())
+export function formatElapsedDuration(value: string, now = Date.now()) {
+  const diffMs = Math.max(0, now - new Date(value).getTime())
   const totalMinutes = Math.floor(diffMs / 60_000)
 
   if (totalMinutes <= 0) {
-    return "Aberto agora"
+    return "0min"
   }
 
   const days = Math.floor(totalMinutes / (24 * 60))
@@ -208,15 +189,19 @@ export function formatElapsedTime(value: string) {
     parts.push(`${days}d`)
   }
 
-  if (hours > 0) {
+  if (hours > 0 || days > 0) {
     parts.push(`${hours}h`)
   }
 
-  if (minutes > 0 && days === 0) {
+  if (days === 0 || minutes > 0) {
     parts.push(`${minutes}min`)
   }
 
-  return `Há ${parts.slice(0, 2).join(" ")}`
+  return parts.slice(0, 2).join(" ")
+}
+
+export function formatElapsedTime(value: string) {
+  return formatElapsedDuration(value)
 }
 
 export function formatSignedCentsToBRL(cents: number) {

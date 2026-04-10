@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import Image from "next/image"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   Banknote,
   CreditCard,
@@ -11,11 +13,11 @@ import {
   Search,
   ShoppingCart,
   Trash2,
+  X,
 } from "lucide-react"
-import { toast } from "sonner"
 
 import { CustomerAutocomplete } from "@/components/pdv/customer-autocomplete"
-import { PdvScannerPanel } from "@/components/pdv/pdv-scanner-panel"
+import { MoneyInput } from "@/components/shared/money-input"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { SectionCard } from "@/components/shared/section-card"
@@ -30,6 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   PDV_CART_STORAGE_KEY,
   buildPdvCartSummary,
@@ -37,23 +40,30 @@ import {
   defaultPdvDiscount,
   formatCentsToBRL,
   formatDateTime,
-  formatPdvCurrencyInput,
   getCartItemSubtotalCents,
   getPdvPaymentMethodLabel,
   getPdvPaymentMethods,
   getSuggestedPaymentAmountCents,
+  toPdvCheckoutPayload,
   type PdvCartItem,
   type PdvCompletedSale,
   type PdvCustomerOption,
   type PdvDiscountInput,
   type PdvPaymentLine,
   type PdvSearchResult,
-  toPdvCheckoutPayload,
 } from "@/lib/pdv"
+import {
+  fromPdvCompletedSaleDto,
+  fromPdvSearchResultDto,
+  type PdvCompletedSaleDto,
+  type PdvSearchResultDto,
+} from "@/lib/pdv-api"
 import type { CashCurrentSession } from "@/lib/cash"
+import { toast } from "@/lib/toast"
+import { cn } from "@/lib/utils"
 
 type SearchApiResponse = {
-  data?: PdvSearchResult[]
+  data?: PdvSearchResultDto[]
   error?: string
 }
 
@@ -63,7 +73,7 @@ type CashSessionApiResponse = {
 }
 
 type CheckoutApiResponse = {
-  data?: PdvCompletedSale
+  data?: PdvCompletedSaleDto
   error?: string
 }
 
@@ -94,19 +104,50 @@ function parseStoredCartItems(value: string | null) {
       return []
     }
 
-    return parsed.filter(
-      (item) =>
-        Boolean(item?.key) &&
-        Boolean(item?.productId) &&
-        typeof item?.quantity === "number" &&
-        typeof item?.unitPriceCents === "number"
-    )
+    return parsed
+      .filter(
+        (item) =>
+          Boolean(item?.key) &&
+          Boolean(item?.productId) &&
+          typeof item?.quantity === "number" &&
+          typeof item?.unitPriceCents === "number"
+      )
+      .map((item) => ({
+        ...item,
+        imageUrl: item.imageUrl ?? null,
+        category: item.category ?? null,
+        imeiOrSerial: item.imeiOrSerial ?? null,
+        productUnitId: item.productUnitId ?? null,
+        availableQuantity:
+          typeof item.availableQuantity === "number" ? item.availableQuantity : 0,
+      }))
   } catch {
     return []
   }
 }
 
+function ProductThumb({
+  imageUrl,
+  alt,
+}: {
+  imageUrl: string | null
+  alt: string
+}) {
+  return (
+    <div className="relative size-14 overflow-hidden rounded-2xl border border-border/70 bg-muted/40">
+      {imageUrl ? (
+        <Image src={imageUrl} alt={alt} fill className="object-cover" sizes="56px" />
+      ) : (
+        <div className="flex size-full items-center justify-center bg-muted text-xs font-medium text-muted-foreground">
+          IMG
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PdvPage() {
+  const router = useRouter()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const cartItemsRef = useRef<PdvCartItem[]>([])
   const [session, setSession] = useState<CashCurrentSession | null>(null)
@@ -124,15 +165,19 @@ export function PdvPage() {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false)
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false)
   const [completedSale, setCompletedSale] = useState<PdvCompletedSale | null>(null)
+  const [recentlyAddedKey, setRecentlyAddedKey] = useState<string | null>(null)
 
   cartItemsRef.current = cartItems
 
-  const summary = buildPdvCartSummary(cartItems, paymentLines, discount)
+  const summary = useMemo(
+    () => buildPdvCartSummary(cartItems, paymentLines, discount),
+    [cartItems, paymentLines, discount]
+  )
 
   useEffect(() => {
     setCartItems(parseStoredCartItems(sessionStorage.getItem(PDV_CART_STORAGE_KEY)))
     searchInputRef.current?.focus()
-  }, [])
+  }, [router])
 
   useEffect(() => {
     if (cartItems.length > 0) {
@@ -144,6 +189,18 @@ export function PdvPage() {
   }, [cartItems])
 
   useEffect(() => {
+    if (!recentlyAddedKey) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setRecentlyAddedKey(null)
+    }, 320)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [recentlyAddedKey])
+
+  useEffect(() => {
     const controller = new AbortController()
 
     setIsLoadingSession(true)
@@ -152,7 +209,8 @@ export function PdvPage() {
         const responseData = (await response.json()) as CashSessionApiResponse
 
         if (!response.ok || !responseData.data) {
-          throw new Error(
+          throw createApiError(
+            response.status,
             responseData.error ?? "Não foi possível carregar a sessão do caixa."
           )
         }
@@ -164,18 +222,19 @@ export function PdvPage() {
           return
         }
 
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Não foi possível carregar a sessão do caixa."
-        )
+        toast.error(parseApiError(error))
+
+        if (shouldRedirectToLogin(error)) {
+          router.replace("/login")
+          router.refresh()
+        }
       })
       .finally(() => {
         setIsLoadingSession(false)
       })
 
     return () => controller.abort()
-  }, [])
+  }, [router])
 
   useEffect(() => {
     const handleKeyboardShortcut = (event: KeyboardEvent) => {
@@ -209,12 +268,13 @@ export function PdvPage() {
           const responseData = (await response.json()) as SearchApiResponse
 
           if (!response.ok) {
-            throw new Error(
+            throw createApiError(
+              response.status,
               responseData.error ?? "Não foi possível buscar itens no PDV."
             )
           }
 
-          setSearchResults(responseData.data ?? [])
+          setSearchResults((responseData.data ?? []).map(fromPdvSearchResultDto))
           setIsSearchOpen(true)
         })
         .catch((error) => {
@@ -223,11 +283,12 @@ export function PdvPage() {
           }
 
           setSearchResults([])
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : "Não foi possível buscar itens no PDV."
-          )
+          toast.error(parseApiError(error))
+
+          if (shouldRedirectToLogin(error)) {
+            router.replace("/login")
+            router.refresh()
+          }
         })
         .finally(() => {
           setIsSearching(false)
@@ -238,7 +299,7 @@ export function PdvPage() {
       controller.abort()
       window.clearTimeout(timeoutId)
     }
-  }, [search])
+  }, [router, search])
 
   function focusSearchInput() {
     window.setTimeout(() => {
@@ -278,6 +339,8 @@ export function PdvPage() {
           hasSerialControl: true,
           imeiOrSerial: result.imeiOrSerial,
           availableQuantity: 1,
+          imageUrl: result.imageUrl,
+          category: result.category,
         },
       ])
     } else {
@@ -312,11 +375,14 @@ export function PdvPage() {
             hasSerialControl: false,
             imeiOrSerial: null,
             availableQuantity: result.availableQuantity,
+            imageUrl: result.imageUrl,
+            category: result.category,
           },
         ])
       }
     }
 
+    setRecentlyAddedKey(result.kind === "unit" && result.productUnitId ? `unit:${result.productUnitId}` : `product:${result.productId}`)
     clearSearch()
     focusSearchInput()
     return true
@@ -361,11 +427,11 @@ export function PdvPage() {
     ])
   }
 
-  function updatePaymentLineAmount(paymentId: string, nextValue: string) {
+  function updatePaymentLineAmount(paymentId: string, amountCents: number) {
     setPaymentLines((current) =>
       current.map((payment) =>
         payment.id === paymentId
-          ? { ...payment, amountInput: formatPdvCurrencyInput(nextValue) }
+          ? { ...payment, amountCents }
           : payment
       )
     )
@@ -379,6 +445,7 @@ export function PdvPage() {
 
   function startNewSale() {
     setCompletedSale(null)
+    setIsConfirmOpen(false)
     setCartItems([])
     setSelectedCustomer(null)
     setPaymentLines([])
@@ -388,18 +455,12 @@ export function PdvPage() {
   }
 
   async function handleCheckout() {
-    if (!session) {
-      toast.error("A sessão de caixa ainda não foi carregada.")
-      return
-    }
-
     try {
       setIsSubmittingCheckout(true)
       const payload = toPdvCheckoutPayload(
         cartItems,
         paymentLines,
         discount,
-        session.id,
         selectedCustomer?.id ?? null
       )
       const response = await fetch("/api/sales/checkout", {
@@ -412,10 +473,13 @@ export function PdvPage() {
       const responseData = (await response.json()) as CheckoutApiResponse
 
       if (!response.ok || !responseData.data) {
-        throw new Error(responseData.error ?? "Não foi possível concluir a venda.")
+        throw createApiError(
+          response.status,
+          responseData.error ?? "Não foi possível concluir a venda."
+        )
       }
 
-      setCompletedSale(responseData.data)
+      setCompletedSale(fromPdvCompletedSaleDto(responseData.data))
       setIsConfirmOpen(false)
       setCartItems([])
       setSelectedCustomer(null)
@@ -423,11 +487,12 @@ export function PdvPage() {
       setDiscount(defaultPdvDiscount)
       clearSearch()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível concluir a venda."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSubmittingCheckout(false)
     }
@@ -440,7 +505,7 @@ export function PdvPage() {
         titleSlot={
           <>
             <Badge variant="outline" className="border-primary/20 text-primary">
-              {isLoadingSession ? "Carregando caixa..." : session?.terminalName ?? "PDV"}
+              {isLoadingSession ? "Carregando caixa..." : session?.terminalName ?? "Caixa automático"}
             </Badge>
             {session ? (
               <>
@@ -453,16 +518,14 @@ export function PdvPage() {
             <Badge variant="outline">F2 busca rápida</Badge>
           </>
         }
-        description="Venda rápida com busca por nome, código, barcode ou IMEI, carrinho persistido e múltiplas formas de pagamento."
+        description="Venda de balcão com busca rápida, carrinho persistido e checkout em múltiplas formas de pagamento."
       />
 
-      <PdvScannerPanel onProductScanned={addResultToCart} />
-
-      <div className="grid gap-6 xl:grid-cols-12">
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.9fr)]">
         <SectionCard
           title="Busca e carrinho"
-          description="Pesquise itens com rapidez e monte a venda do balcão sem perder o estado do carrinho."
-          className="xl:col-span-8"
+          description="Pesquise por nome, código, barcode ou IMEI e monte a venda sem perder o estado atual."
+          className="min-w-0"
         >
           <div className="grid gap-6">
             <div
@@ -475,7 +538,7 @@ export function PdvPage() {
               <Input
                 ref={searchInputRef}
                 value={search}
-                placeholder="Buscar por nome, código, barcode ou IMEI"
+                placeholder="Nome, código, barcode ou IMEI..."
                 className="h-14 rounded-3xl pl-12 pr-4 text-base"
                 onFocus={() => {
                   if (searchResults.length > 0) {
@@ -512,35 +575,40 @@ export function PdvPage() {
                         <button
                           key={result.key}
                           type="button"
-                          className="flex w-full items-start justify-between gap-4 rounded-2xl px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                          className="flex w-full items-start gap-4 rounded-2xl px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                           onMouseDown={(event) => {
                             event.preventDefault()
                             addResultToCart(result)
                           }}
                         >
-                          <div className="min-w-0 space-y-1">
+                          <ProductThumb imageUrl={result.imageUrl} alt={result.name} />
+
+                          <div className="min-w-0 flex-1 space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-medium text-foreground">
-                                {result.internalCode}
+                                {result.name}
                               </span>
+                              <Badge variant="outline">{result.internalCode}</Badge>
                               {result.imeiOrSerial ? (
-                                <Badge variant="outline">
+                                <Badge variant="outline" className="border-primary/20 text-primary">
                                   {result.imeiOrSerial}
                                 </Badge>
                               ) : null}
                             </div>
+
                             <p className="truncate text-sm text-muted-foreground">
-                              {result.name}
+                              {result.category?.name ?? "Sem categoria"}
                             </p>
                           </div>
+
                           <div className="shrink-0 text-right text-sm">
                             <p className="font-medium text-foreground">
                               {formatCentsToBRL(result.salePriceCents)}
                             </p>
                             <p className="text-muted-foreground">
                               {result.kind === "unit"
-                                ? "1 un."
-                                : `${result.availableQuantity} disp.`}
+                                ? "1 unidade"
+                                : `${result.availableQuantity.toLocaleString("pt-BR")} em estoque`}
                             </p>
                           </div>
                         </button>
@@ -560,23 +628,35 @@ export function PdvPage() {
                 cartItems.map((item) => (
                   <div
                     key={item.key}
-                    className="flex flex-col gap-4 rounded-3xl border border-border/70 bg-background p-4 md:flex-row md:items-center md:justify-between"
+                    className={cn(
+                      "flex flex-col gap-4 rounded-3xl border border-border/70 bg-background p-4 md:flex-row md:items-center md:justify-between",
+                      recentlyAddedKey === item.key &&
+                        "animate-in slide-in-from-top-4 fade-in-0 duration-300"
+                    )}
                   >
-                    <div className="min-w-0 flex-1 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-foreground">
-                          {item.name}
-                        </span>
-                        <Badge variant="outline">{item.internalCode}</Badge>
-                        {item.imeiOrSerial ? (
-                          <Badge variant="outline" className="border-primary/20 text-primary">
-                            {item.imeiOrSerial}
-                          </Badge>
-                        ) : null}
+                    <div className="flex min-w-0 flex-1 items-start gap-4">
+                      <ProductThumb imageUrl={item.imageUrl} alt={item.name} />
+
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-foreground">
+                            {item.name}
+                          </span>
+                          <Badge variant="outline">{item.internalCode}</Badge>
+                          {item.category ? (
+                            <Badge variant="outline">{item.category.name}</Badge>
+                          ) : null}
+                          {item.imeiOrSerial ? (
+                            <Badge variant="outline" className="border-primary/20 text-primary">
+                              {item.imeiOrSerial}
+                            </Badge>
+                          ) : null}
+                        </div>
+
+                        <p className="text-sm text-muted-foreground">
+                          {formatCentsToBRL(item.unitPriceCents)} por unidade
+                        </p>
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        {formatCentsToBRL(item.unitPriceCents)} por unidade
-                      </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 md:justify-end">
@@ -632,8 +712,8 @@ export function PdvPage() {
               ) : (
                 <EmptyState
                   icon={ShoppingCart}
-                  title="Carrinho vazio."
-                  description="Pesquise um produto pelo código, nome, barcode ou IMEI para começar a venda."
+                  title="Carrinho vazio"
+                  description="Busque um produto acima"
                   className="min-h-72"
                 />
               )}
@@ -643,8 +723,8 @@ export function PdvPage() {
 
         <SectionCard
           title="Resumo e pagamento"
-          description="Aplique desconto, vincule um cliente e monte o recebimento antes de finalizar."
-          className="xl:col-span-4"
+          description="Aplique desconto, selecione cliente e confirme os recebimentos antes de concluir a venda."
+          className="min-w-0"
         >
           <div className="grid gap-6">
             <div className="space-y-3 rounded-3xl border border-border/70 bg-background p-4">
@@ -654,15 +734,15 @@ export function PdvPage() {
               </div>
 
               <div className="grid gap-3">
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <Button
                     type="button"
                     variant={discount.mode === "amount" ? "default" : "outline"}
-                    className="flex-1"
+                    className="w-full"
                     onClick={() =>
                       setDiscount({
                         mode: "amount",
-                        value: "0,00",
+                        valueCents: 0,
                       })
                     }
                   >
@@ -671,7 +751,7 @@ export function PdvPage() {
                   <Button
                     type="button"
                     variant={discount.mode === "percent" ? "default" : "outline"}
-                    className="flex-1"
+                    className="w-full"
                     onClick={() =>
                       setDiscount({
                         mode: "percent",
@@ -684,22 +764,16 @@ export function PdvPage() {
                 </div>
 
                 {discount.mode === "amount" ? (
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                      R$
-                    </span>
-                    <Input
-                      value={discount.value}
-                      className="pl-10"
-                      inputMode="numeric"
-                      onChange={(event) =>
-                        setDiscount({
-                          mode: "amount",
-                          value: formatPdvCurrencyInput(event.target.value),
-                        })
-                      }
-                    />
-                  </div>
+                  <MoneyInput
+                    value={discount.valueCents}
+                    onChange={(value) =>
+                      setDiscount({
+                        mode: "amount",
+                        valueCents: value,
+                      })
+                    }
+                    placeholder="0,00"
+                  />
                 ) : (
                   <Input
                     type="number"
@@ -722,16 +796,28 @@ export function PdvPage() {
                 <strong>{formatCentsToBRL(summary.discountAmountCents)}</strong>
               </div>
 
-              <div className="flex items-center justify-between gap-4 rounded-2xl bg-primary/10 px-4 py-3">
-                <span className="text-sm font-medium text-primary">Total</span>
-                <strong className="text-2xl font-semibold text-primary">
+              <div className="flex items-center justify-between gap-4 rounded-3xl bg-orange-500/10 px-4 py-4">
+                <span className="text-sm font-medium text-orange-700">TOTAL</span>
+                <strong className="text-3xl font-semibold text-orange-700">
                   {formatCentsToBRL(summary.totalCents)}
                 </strong>
               </div>
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-foreground">Cliente</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-foreground">Cliente</p>
+                {selectedCustomer ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setSelectedCustomer(null)}
+                  >
+                    <X />
+                  </Button>
+                ) : null}
+              </div>
               <CustomerAutocomplete
                 value={selectedCustomer}
                 onChange={setSelectedCustomer}
@@ -752,7 +838,7 @@ export function PdvPage() {
                       key={method}
                       type="button"
                       variant={active ? "default" : "outline"}
-                      className="h-16 flex-col gap-2 rounded-3xl"
+                      className="h-20 flex-col gap-2 rounded-3xl"
                       onClick={() => addPaymentMethod(method)}
                     >
                       <Icon className="size-5" />
@@ -770,11 +856,9 @@ export function PdvPage() {
                   className="rounded-3xl border border-border/70 bg-background p-4"
                 >
                   <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">
-                        {getPdvPaymentMethodLabel(payment.method)}
-                      </Badge>
-                    </div>
+                    <Badge variant="outline">
+                      {getPdvPaymentMethodLabel(payment.method)}
+                    </Badge>
                     <Button
                       type="button"
                       size="icon-xs"
@@ -788,19 +872,17 @@ export function PdvPage() {
                   <label className="mb-2 block text-sm font-medium text-foreground">
                     {payment.method === "CASH" ? "Valor recebido" : "Valor"}
                   </label>
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                      R$
-                    </span>
-                    <Input
-                      value={payment.amountInput}
-                      className="pl-10"
-                      inputMode="numeric"
-                      onChange={(event) =>
-                        updatePaymentLineAmount(payment.id, event.target.value)
-                      }
-                    />
-                  </div>
+                  <MoneyInput
+                    value={payment.amountCents}
+                    onChange={(value) => updatePaymentLineAmount(payment.id, value)}
+                    placeholder="0,00"
+                  />
+
+                  {payment.method === "CASH" ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Troco: <strong>{formatCentsToBRL(summary.changeCents)}</strong>
+                    </p>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -809,6 +891,10 @@ export function PdvPage() {
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">Recebido</span>
                 <strong>{formatCentsToBRL(summary.totalPaidCents)}</strong>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Faltante</span>
+                <strong>{formatCentsToBRL(summary.remainingCents)}</strong>
               </div>
               <div className="mt-2 flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">Troco</span>
@@ -820,8 +906,8 @@ export function PdvPage() {
             </div>
 
             <Button
-              className="h-12 w-full text-base"
-              disabled={!session || !summary.isPaymentValid || isSubmittingCheckout}
+              className="h-14 w-full rounded-3xl bg-orange-500 text-base text-white hover:bg-orange-600"
+              disabled={!summary.isPaymentValid || isSubmittingCheckout}
               onClick={() => setIsConfirmOpen(true)}
             >
               {isSubmittingCheckout ? (
@@ -840,7 +926,7 @@ export function PdvPage() {
           <DialogHeader>
             <DialogTitle>Confirmar venda</DialogTitle>
             <DialogDescription>
-              Revise os itens, o total e as formas de pagamento antes de concluir.
+              Revise os itens, o total e os pagamentos antes de concluir.
             </DialogDescription>
           </DialogHeader>
 
@@ -854,12 +940,11 @@ export function PdvPage() {
                   <div className="space-y-1">
                     <p className="font-medium text-foreground">{item.name}</p>
                     <p className="text-muted-foreground">
-                      {item.internalCode}
+                      {item.quantity} x {item.internalCode}
                       {item.imeiOrSerial ? ` • ${item.imeiOrSerial}` : ""}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-muted-foreground">{item.quantity} un.</p>
                     <strong>{formatCentsToBRL(getCartItemSubtotalCents(item))}</strong>
                   </div>
                 </div>
@@ -893,24 +978,12 @@ export function PdvPage() {
                     </span>
                     <div className="text-right">
                       <strong>{formatCentsToBRL(payment.enteredAmountCents)}</strong>
-                      {payment.method === "CASH" &&
-                      payment.enteredAmountCents !== payment.appliedAmountCents ? (
-                        <p className="text-xs text-muted-foreground">
-                          Aplicado: {formatCentsToBRL(payment.appliedAmountCents)}
-                        </p>
-                      ) : null}
                     </div>
                   </div>
                 ))
               ) : (
                 <p className="text-muted-foreground">Sem pagamentos lançados.</p>
               )}
-              {summary.changeCents > 0 ? (
-                <div className="flex items-center justify-between gap-3 border-t border-border pt-2">
-                  <span className="text-muted-foreground">Troco</span>
-                  <strong>{formatCentsToBRL(summary.changeCents)}</strong>
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -957,9 +1030,9 @@ export function PdvPage() {
 
           {completedSale ? (
             <div className="grid gap-4">
-              <div className="rounded-3xl bg-primary/10 px-4 py-5 text-center">
-                <p className="text-sm text-primary/80">Número da venda</p>
-                <strong className="text-3xl font-semibold text-primary">
+              <div className="rounded-3xl bg-orange-500/10 px-4 py-5 text-center">
+                <p className="text-sm text-orange-700/80">Número da venda</p>
+                <strong className="text-3xl font-semibold text-orange-700">
                   {completedSale.saleNumber}
                 </strong>
               </div>
@@ -989,7 +1062,11 @@ export function PdvPage() {
                   return
                 }
 
-                window.open(`/api/sales/${completedSale.id}/receipt`, "_blank", "noopener,noreferrer")
+                window.open(
+                  `/api/sales/${completedSale.id}/receipt`,
+                  "_blank",
+                  "noopener,noreferrer"
+                )
               }}
             >
               Imprimir comprovante

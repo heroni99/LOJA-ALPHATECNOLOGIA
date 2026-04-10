@@ -6,6 +6,7 @@ import { CircleDollarSign } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   accountSettlementFormSchema,
   defaultAccountSettlementFormValues,
@@ -43,6 +44,7 @@ import {
   toAccountSettlementMutationInput,
 } from "@/lib/financial"
 import { formatCurrencyInputFromCents } from "@/lib/products"
+import { toast } from "@/lib/toast"
 
 type AccountSettlementDialogProps = {
   endpoint: string
@@ -95,18 +97,22 @@ export function AccountSettlementDialog({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(responseData?.error ?? "Não foi possível concluir a liquidação.")
+        throw createApiError(
+          response.status,
+          responseData?.error ?? "Não foi possível concluir a liquidação."
+        )
       }
 
       toast.success(`${label} registrada com sucesso.`)
       setOpen(false)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível concluir a liquidação."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -132,90 +138,92 @@ export function AccountSettlementDialog({
             onSubmit={form.handleSubmit(handleSubmit)}
             className="grid gap-4"
           >
-            <FormField
-              control={form.control}
-              name="settled_at"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Data</FormLabel>
-                  <FormControl>
-                    <Input {...field} type="date" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="amount"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Valor</FormLabel>
-                  <FormControl>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                        R$
-                      </span>
-                      <Input
-                        value={field.value}
-                        className="pl-10"
-                        inputMode="numeric"
-                        onChange={(event) =>
-                          field.onChange(
-                            formatFinancialCurrencyInput(event.target.value)
-                          )
-                        }
-                      />
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="payment_method"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Forma de pagamento</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+            <fieldset disabled={isSaving} className="grid gap-4">
+              <FormField
+                control={form.control}
+                name="settled_at"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Data</FormLabel>
                     <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Selecione a forma" />
-                      </SelectTrigger>
+                      <Input {...field} type="date" />
                     </FormControl>
-                    <SelectContent>
-                      {paymentMethods.map((method) => (
-                        <SelectItem key={method} value={method}>
-                          {getFinancialPaymentMethodLabel(method)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Observações</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      className="min-h-24"
-                      placeholder="Observações sobre a liquidação."
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="amount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Valor</FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                          R$
+                        </span>
+                        <Input
+                          value={field.value}
+                          className="pl-10"
+                          inputMode="numeric"
+                          onChange={(event) =>
+                            field.onChange(
+                              formatFinancialCurrencyInput(event.target.value)
+                            )
+                          }
+                        />
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="payment_method"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Forma de pagamento</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a forma" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {paymentMethods.map((method) => (
+                          <SelectItem key={method} value={method}>
+                            {getFinancialPaymentMethodLabel(method)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Observações</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        {...field}
+                        className="min-h-24"
+                        placeholder="Observações sobre a liquidação."
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </fieldset>
           </form>
         </Form>
 
@@ -223,13 +231,14 @@ export function AccountSettlementDialog({
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancelar
           </Button>
-          <Button
+          <LoadingButton
             type="submit"
             form={`settlement-${endpoint}`}
-            disabled={isSaving}
+            isLoading={isSaving}
+            loadingLabel="Salvando..."
           >
-            {isSaving ? "Salvando..." : label}
-          </Button>
+            {label}
+          </LoadingButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

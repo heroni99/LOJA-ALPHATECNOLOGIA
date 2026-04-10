@@ -3,32 +3,34 @@ import {
   BadgeDollarSign,
   Boxes,
   ClipboardList,
-  PencilLine,
+  Printer,
   Tag,
+  Ticket,
 } from "lucide-react"
 import { notFound } from "next/navigation"
 
+import { ProductStatusBadge } from "@/components/products/product-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { SectionCard } from "@/components/shared/section-card"
 import { StatCard } from "@/components/shared/stat-card"
-import { ProductStatusBadge } from "@/components/products/product-status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  getCurrentStoreContext,
-  getProductFullDetail,
-} from "@/lib/products-server"
 import {
   formatCentsToBRL,
   formatDateTime,
   formatQuantity,
   getStockMovementLabel,
+  type ProductCode,
   type ProductMovement,
   type ProductStockBalance,
 } from "@/lib/products"
+import {
+  getCurrentStoreContext,
+  getProductFullDetail,
+} from "@/lib/products-server"
 
 type ProductDetailPageProps = {
   params: {
@@ -58,7 +60,39 @@ const stockColumns: DataTableColumn<ProductStockBalance>[] = [
   },
 ]
 
+const codeColumns: DataTableColumn<ProductCode>[] = [
+  {
+    key: "type",
+    header: "Tipo",
+    cell: (code) => code.codeType,
+  },
+  {
+    key: "code",
+    header: "Código",
+    cell: (code) => (
+      <span className="font-medium text-foreground">{code.code}</span>
+    ),
+  },
+  {
+    key: "primary",
+    header: "Primário?",
+    cell: (code) =>
+      code.isPrimary ? (
+        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+          Sim
+        </Badge>
+      ) : (
+        <span className="text-muted-foreground">Não</span>
+      ),
+  },
+]
+
 const movementColumns: DataTableColumn<ProductMovement>[] = [
+  {
+    key: "created_at",
+    header: "Data",
+    cell: (movement) => formatDateTime(movement.createdAt),
+  },
   {
     key: "movement_type",
     header: "Movimento",
@@ -77,23 +111,9 @@ const movementColumns: DataTableColumn<ProductMovement>[] = [
     headClassName: "text-right",
   },
   {
-    key: "unit_cost",
-    header: "Custo unitário",
-    cell: (movement) => formatCentsToBRL(movement.unitCostCents),
-    className: "text-right",
-    headClassName: "text-right",
-  },
-  {
     key: "reference_type",
     header: "Referência",
     cell: (movement) => movement.referenceType ?? "Manual",
-  },
-  {
-    key: "created_at",
-    header: "Data",
-    cell: (movement) => formatDateTime(movement.createdAt),
-    className: "text-right",
-    headClassName: "text-right",
   },
 ]
 
@@ -129,74 +149,105 @@ export default async function ProductDetailPage({
     notFound()
   }
 
-  const { product, stockBalances, recentMovements } = detail
+  const { product, codes, stockBalances, recentMovements } = detail
+  const stockVariant = product.isService
+    ? "warning"
+    : product.stockTotal < product.stockMin
+      ? "danger"
+      : "success"
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title={product.name}
+        backHref="/products"
+        breadcrumbs={[
+          { label: "Produtos", href: "/products" },
+          { label: product.name },
+        ]}
         titleSlot={
           <>
-            <Badge variant="outline" className="border-primary/20 text-primary">
+            <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
               {product.internalCode}
             </Badge>
+            {product.categoryName ? (
+              <Badge variant="outline">{product.categoryName}</Badge>
+            ) : null}
+            {product.isService ? (
+              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                Serviço
+              </Badge>
+            ) : null}
             <ProductStatusBadge active={product.active} />
           </>
         }
-        description="Visualize identificação, fiscal, preço e a movimentação recente deste item."
+        subtitle="Consulte preço, estoque, códigos cadastrados e as últimas movimentações do item."
         actions={
-          <Button asChild>
-            <Link href={`/products/${product.id}/edit`}>
-              <PencilLine />
-              Editar
-            </Link>
-          </Button>
+          <>
+            <Button variant="outline" asChild>
+              <a
+                href={`/api/products/${product.id}/barcode`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Printer />
+                Imprimir etiqueta
+              </a>
+            </Button>
+            <Button asChild>
+              <Link href={`/products/${product.id}/edit`}>
+                <Tag />
+                Editar
+              </Link>
+            </Button>
+          </>
         }
       />
 
       <div className="grid gap-4 xl:grid-cols-3">
         <StatCard
-          title="Estoque total"
-          value={formatQuantity(product.totalStock)}
-          description="Saldo consolidado em todos os locais."
+          label="Estoque total"
+          value={product.isService ? "N/A" : formatQuantity(product.stockTotal)}
           icon={<Boxes className="size-5" />}
+          variant={stockVariant}
         />
         <StatCard
-          title="Custo"
+          label="Custo"
           value={formatCentsToBRL(product.costPriceCents)}
-          description="Valor persistido em centavos no banco."
           icon={<BadgeDollarSign className="size-5" />}
         />
         <StatCard
-          title="Preço de venda"
+          label="Preço venda"
           value={formatCentsToBRL(product.salePriceCents)}
-          description="Preço atual do catálogo."
-          icon={<Tag className="size-5" />}
+          icon={<Ticket className="size-5" />}
         />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <SectionCard
           title="Identificação"
-          description="Dados principais do cadastro e vínculo operacional."
+          description="Dados principais do cadastro e vínculo comercial."
         >
           <div className="grid gap-4 md:grid-cols-2">
             <FieldValue label="Categoria" value={product.categoryName} />
             <FieldValue label="Fornecedor" value={product.supplierName} />
             <FieldValue label="Marca" value={product.brand} />
             <FieldValue label="Modelo" value={product.model} />
+            <FieldValue label="Código fornecedor" value={product.supplierCode} />
+            <FieldValue label="Descrição" value={product.description} />
           </div>
         </SectionCard>
 
         <SectionCard
           title="Fiscal"
-          description="Campos fiscais básicos do cadastro."
+          description="Campos fiscais e tributários configurados para o item."
         >
           <div className="grid gap-4 md:grid-cols-2">
             <FieldValue label="NCM" value={product.ncm} />
             <FieldValue label="CEST" value={product.cest} />
-            <FieldValue label="CFOP" value={product.cfopDefault} />
+            <FieldValue label="CFOP padrão" value={product.cfopDefault} />
             <FieldValue label="Origem" value={product.originCode} />
+            <FieldValue label="Categoria tributária" value={product.taxCategory} />
           </div>
         </SectionCard>
       </div>
@@ -204,13 +255,14 @@ export default async function ProductDetailPage({
       <Tabs defaultValue="stock" className="gap-4">
         <TabsList>
           <TabsTrigger value="stock">Estoque por local</TabsTrigger>
-          <TabsTrigger value="movements">Movimentações recentes</TabsTrigger>
+          <TabsTrigger value="codes">Códigos</TabsTrigger>
+          <TabsTrigger value="movements">Movimentações</TabsTrigger>
         </TabsList>
 
         <TabsContent value="stock">
           <SectionCard
             title="Estoque por local"
-            description="Saldo atual do produto por localização."
+            description="Distribuição atual do saldo nas localizações da loja."
           >
             <DataTable
               columns={stockColumns}
@@ -219,8 +271,33 @@ export default async function ProductDetailPage({
               emptyState={
                 <EmptyState
                   icon={Boxes}
-                  title="Sem saldo registrado."
-                  description="Este produto ainda não tem posições de estoque registradas."
+                  title={product.isService ? "Serviço sem estoque." : "Sem saldo registrado."}
+                  description={
+                    product.isService
+                      ? "Serviços não controlam estoque físico."
+                      : "Este produto ainda não possui posições registradas."
+                  }
+                  className="min-h-56 rounded-none border-0 bg-transparent"
+                />
+              }
+            />
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="codes">
+          <SectionCard
+            title="Códigos"
+            description="Lista dos códigos associados ao produto."
+          >
+            <DataTable
+              columns={codeColumns}
+              data={codes}
+              getRowKey={(code) => code.id}
+              emptyState={
+                <EmptyState
+                  icon={Ticket}
+                  title="Nenhum código encontrado."
+                  description="Os códigos gerados e cadastrados manualmente aparecerão aqui."
                   className="min-h-56 rounded-none border-0 bg-transparent"
                 />
               }
@@ -230,8 +307,8 @@ export default async function ProductDetailPage({
 
         <TabsContent value="movements">
           <SectionCard
-            title="Movimentações recentes"
-            description="Últimos eventos que afetaram o estoque deste produto."
+            title="Movimentações"
+            description="Últimos 20 movimentos de estoque vinculados ao produto."
           >
             <DataTable
               columns={movementColumns}
@@ -240,8 +317,12 @@ export default async function ProductDetailPage({
               emptyState={
                 <EmptyState
                   icon={ClipboardList}
-                  title="Nenhuma movimentação encontrada."
-                  description="As entradas, saídas e ajustes mais recentes aparecerão aqui."
+                  title={product.isService ? "Serviço sem movimentações." : "Nenhuma movimentação encontrada."}
+                  description={
+                    product.isService
+                      ? "Serviços não geram movimentação física de estoque."
+                      : "As entradas, saídas e ajustes mais recentes aparecerão aqui."
+                  }
                   className="min-h-56 rounded-none border-0 bg-transparent"
                 />
               }

@@ -10,14 +10,18 @@ import { useForm } from "react-hook-form"
 import type { InventoryLocationOption } from "@/lib/inventory"
 import {
   defaultInventoryEntryFormValues,
-  formatInventoryCurrencyInput,
+  formatQuantityInput,
   inventoryEntryFormSchema,
   type InventoryEntryFormValues,
   toInventoryEntryMutationInput,
 } from "@/lib/inventory"
+import { ProductAutocomplete } from "@/components/inventory/product-autocomplete"
 import { FormPage } from "@/components/shared/form-page"
+import { FormSection } from "@/components/shared/form-section"
+import { LoadingButton } from "@/components/shared/loading-button"
+import { MoneyInput } from "@/components/shared/money-input"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Form,
   FormControl,
@@ -35,8 +39,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
-import { ProductAutocomplete } from "@/components/inventory/product-autocomplete"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
+import { toast } from "@/lib/toast"
 
 type InventoryEntryFormProps = {
   locations: InventoryLocationOption[]
@@ -65,20 +69,21 @@ export function InventoryEntryForm({ locations }: InventoryEntryFormProps) {
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(
+        throw createApiError(
+          response.status,
           responseData?.error ?? "Não foi possível registrar a entrada."
         )
       }
 
       toast.success("Entrada de estoque registrada com sucesso.")
-      router.push("/inventory")
-      router.refresh()
+      form.reset(defaultInventoryEntryFormValues)
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível registrar a entrada."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -88,15 +93,25 @@ export function InventoryEntryForm({ locations }: InventoryEntryFormProps) {
     <FormPage
       title="Entrada de estoque"
       description="Lance recebimentos e incremente o saldo do produto no local de destino."
+      backHref="/inventory"
+      breadcrumbs={[
+        { label: "Estoque", href: "/inventory" },
+        { label: "Entrada" },
+      ]}
       footer={
         <>
           <Button variant="outline" asChild>
             <Link href="/inventory">Cancelar</Link>
           </Button>
-          <Button type="submit" form="inventory-entry-form" disabled={isSaving}>
+          <LoadingButton
+            type="submit"
+            form="inventory-entry-form"
+            isLoading={isSaving}
+            loadingLabel="Confirmando..."
+          >
             <Save />
-            {isSaving ? "Confirmando..." : "Confirmar entrada"}
-          </Button>
+            Confirmar entrada
+          </LoadingButton>
         </>
       }
     >
@@ -106,120 +121,111 @@ export function InventoryEntryForm({ locations }: InventoryEntryFormProps) {
           onSubmit={form.handleSubmit(handleSubmit)}
           className="grid gap-6"
         >
-          <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
-            <CardHeader>
-              <CardTitle>Entrada</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <FormField
-                control={form.control}
-                name="product_id"
-                render={({ field }) => (
-                  <FormItem className="md:col-span-2">
-                    <FormLabel>Produto *</FormLabel>
-                    <FormControl>
-                      <ProductAutocomplete
-                        value={field.value}
-                        onChange={field.onChange}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="location_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Local de destino *</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
+          <fieldset disabled={isSaving} className="grid gap-6">
+            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+            <CardContent className="pt-6">
+              <FormSection title="Entrada">
+                <FormField
+                  control={form.control}
+                  name="product_id"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>Produto *</FormLabel>
                       <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Selecione o local" />
-                        </SelectTrigger>
+                        <ProductAutocomplete value={field.value} onChange={field.onChange} />
                       </FormControl>
-                      <SelectContent>
-                        {locations.map((location) => (
-                          <SelectItem key={location.id} value={location.id}>
-                            {location.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-              <FormField
-                control={form.control}
-                name="quantity"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Quantidade *</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="number"
-                        min="0.001"
-                        step="0.001"
-                        inputMode="decimal"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                <FormField
+                  control={form.control}
+                  name="location_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Local de destino *</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Selecione o local" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {locations.map((location) => (
+                            <SelectItem key={location.id} value={location.id}>
+                              {location.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-              <FormField
-                control={form.control}
-                name="unit_cost"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Custo unitário *</FormLabel>
-                    <FormControl>
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                          R$
-                        </span>
+                <FormField
+                  control={form.control}
+                  name="quantity"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Quantidade *</FormLabel>
+                      <FormControl>
                         <Input
-                          value={field.value}
-                          className="pl-10"
-                          inputMode="numeric"
+                          {...field}
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          inputMode="decimal"
                           onChange={(event) =>
-                            field.onChange(
-                              formatInventoryCurrencyInput(event.target.value)
-                            )
+                            field.onChange(formatQuantityInput(event.target.value))
                           }
                         />
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem className="md:col-span-2">
-                    <FormLabel>Observações</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        {...field}
-                        className="min-h-36"
-                        placeholder="Informações sobre recebimento, conferência ou origem da entrada."
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                <FormField
+                  control={form.control}
+                  name="unit_cost"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Custo unitário *</FormLabel>
+                      <FormControl>
+                        <MoneyInput
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="0,00"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>Observações</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          className="min-h-32"
+                          placeholder="Informações sobre recebimento, conferência ou origem da entrada."
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </FormSection>
             </CardContent>
-          </Card>
+            </Card>
+          </fieldset>
         </form>
       </Form>
     </FormPage>

@@ -180,6 +180,11 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
     <div className="flex flex-col gap-6">
       <PageHeader
         title={sale.saleNumber}
+        backHref="/sales"
+        breadcrumbs={[
+          { label: "Vendas", href: "/sales" },
+          { label: sale.saleNumber },
+        ]}
         titleSlot={
           <>
             {sale.customerName ? (

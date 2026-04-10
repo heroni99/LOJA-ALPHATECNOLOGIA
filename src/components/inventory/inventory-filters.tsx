@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useTransition } from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { X } from "lucide-react"
+import { Search, X } from "lucide-react"
 
 import type { InventoryLocationOption } from "@/lib/inventory"
 import type { ProductFormOption } from "@/lib/products"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -18,51 +19,52 @@ import {
 type InventoryFiltersProps = {
   locations: InventoryLocationOption[]
   categories: ProductFormOption[]
+  currentSearch: string
   currentLocationId: string | null
   currentCategoryId: string | null
-  currentBelowMin: boolean
+  currentLowStock: boolean
 }
 
 export function InventoryFilters({
   locations,
   categories,
+  currentSearch,
   currentLocationId,
   currentCategoryId,
-  currentBelowMin,
+  currentLowStock,
 }: InventoryFiltersProps) {
   const router = useRouter()
   const pathname = usePathname()
   const [isPending, startTransition] = useTransition()
+  const [search, setSearch] = useState(currentSearch)
   const [locationId, setLocationId] = useState(currentLocationId ?? "all")
   const [categoryId, setCategoryId] = useState(currentCategoryId ?? "all")
-  const [belowMin, setBelowMin] = useState(currentBelowMin ? "true" : "all")
+  const [lowStock, setLowStock] = useState(currentLowStock)
 
   useEffect(() => {
+    setSearch(currentSearch)
     setLocationId(currentLocationId ?? "all")
     setCategoryId(currentCategoryId ?? "all")
-    setBelowMin(currentBelowMin ? "true" : "all")
-  }, [currentBelowMin, currentCategoryId, currentLocationId])
+    setLowStock(currentLowStock)
+  }, [currentCategoryId, currentLocationId, currentLowStock, currentSearch])
 
-  function pushFilters(nextValues?: {
-    locationId?: string
-    categoryId?: string
-    belowMin?: string
-  }) {
+  function pushFilters() {
     const params = new URLSearchParams()
-    const nextLocationId = nextValues?.locationId ?? locationId
-    const nextCategoryId = nextValues?.categoryId ?? categoryId
-    const nextBelowMin = nextValues?.belowMin ?? belowMin
 
-    if (nextLocationId !== "all") {
-      params.set("location_id", nextLocationId)
+    if (search.trim()) {
+      params.set("search", search.trim())
     }
 
-    if (nextCategoryId !== "all") {
-      params.set("category_id", nextCategoryId)
+    if (locationId !== "all") {
+      params.set("location_id", locationId)
     }
 
-    if (nextBelowMin === "true") {
-      params.set("below_min", "true")
+    if (categoryId !== "all") {
+      params.set("category_id", categoryId)
+    }
+
+    if (lowStock) {
+      params.set("low_stock", "true")
     }
 
     startTransition(() => {
@@ -70,8 +72,35 @@ export function InventoryFilters({
     })
   }
 
+  function handleClear() {
+    setSearch("")
+    setLocationId("all")
+    setCategoryId("all")
+    setLowStock(false)
+
+    startTransition(() => {
+      router.push(pathname)
+    })
+  }
+
   return (
-    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_220px_auto]">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        pushFilters()
+      }}
+      className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_220px_220px_auto_auto]"
+    >
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Buscar por nome ou código interno"
+          className="pl-9"
+        />
+      </div>
+
       <Select value={locationId} onValueChange={setLocationId}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Local" />
@@ -100,41 +129,24 @@ export function InventoryFilters({
         </SelectContent>
       </Select>
 
-      <Select value={belowMin} onValueChange={setBelowMin}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder="Estoque mínimo" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Todos os saldos</SelectItem>
-          <SelectItem value="true">Abaixo do mínimo</SelectItem>
-        </SelectContent>
-      </Select>
+      <Button
+        type="button"
+        variant={lowStock ? "default" : "outline"}
+        disabled={isPending}
+        onClick={() => setLowStock((currentValue) => !currentValue)}
+      >
+        {lowStock ? "Abaixo do mínimo" : "Todos os saldos"}
+      </Button>
 
-      <div className="flex flex-wrap gap-2 lg:justify-end">
-        <Button
-          disabled={isPending}
-          onClick={() => pushFilters()}
-        >
+      <div className="flex flex-wrap gap-2 xl:justify-end">
+        <Button type="submit" disabled={isPending}>
           Filtrar
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={isPending}
-          onClick={() => {
-            setLocationId("all")
-            setCategoryId("all")
-            setBelowMin("all")
-
-            startTransition(() => {
-              router.push(pathname)
-            })
-          }}
-        >
+        <Button type="button" variant="outline" disabled={isPending} onClick={handleClear}>
           <X />
           Limpar
         </Button>
       </div>
-    </div>
+    </form>
   )
 }

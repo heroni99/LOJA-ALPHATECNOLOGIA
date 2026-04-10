@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
+import { toPdvSearchResultDto } from "@/lib/pdv-api"
 import { searchPdvCatalog } from "@/lib/pdv-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
 
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
 
     const results = await searchPdvCatalog(storeContext.storeId, query)
 
-    return NextResponse.json({ data: results })
+    return NextResponse.json({ data: results.map(toPdvSearchResultDto) })
   } catch (error) {
     return NextResponse.json(
       { error: getValidationMessage(error) },

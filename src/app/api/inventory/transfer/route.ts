@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ZodError } from "zod"
 
+import {
+  getInventoryApiErrorMessage,
+  toInventoryStockBalanceDto,
+} from "@/lib/inventory-api"
 import { inventoryTransferMutationSchema } from "@/lib/inventory"
-import { createInventoryTransfer } from "@/lib/inventory-server"
+import {
+  createInventoryTransfer,
+  getStockBalanceByProductAndLocation,
+} from "@/lib/inventory-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
 
 function getErrorStatus(error: unknown) {
@@ -12,7 +19,7 @@ function getErrorStatus(error: unknown) {
 
   if (
     error instanceof Error &&
-    /(quantidade|produto|local|origem|destino|estoque|transfer)/i.test(error.message)
+    /(quantidade|produto|local|origem|destino|estoque|transfer|ativo)/i.test(error.message)
   ) {
     return 400
   }
@@ -20,27 +27,12 @@ function getErrorStatus(error: unknown) {
   return 500
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof ZodError) {
-    return error.issues[0]?.message ?? "Dados inválidos."
-  }
-
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível registrar a transferência de estoque."
-}
-
 export async function POST(request: NextRequest) {
   try {
     const storeContext = await getCurrentStoreContext()
 
     if (!storeContext) {
-      return NextResponse.json(
-        { error: "Usuário não autenticado." },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
     }
 
     const body = await request.json()
@@ -50,15 +42,33 @@ export async function POST(request: NextRequest) {
       storeContext.userId,
       payload
     )
+    const [fromBalance, toBalance] = await Promise.all([
+      getStockBalanceByProductAndLocation(
+        storeContext.storeId,
+        payload.product_id,
+        payload.from_location_id
+      ),
+      getStockBalanceByProductAndLocation(
+        storeContext.storeId,
+        payload.product_id,
+        payload.to_location_id
+      ),
+    ])
+
+    if (!fromBalance || !toBalance) {
+      throw new Error("Não foi possível carregar os saldos atualizados.")
+    }
 
     return NextResponse.json({
+      reference_id: referenceId,
       data: {
-        referenceId,
+        from_balance: toInventoryStockBalanceDto(fromBalance),
+        to_balance: toInventoryStockBalanceDto(toBalance),
       },
     })
   } catch (error) {
     return NextResponse.json(
-      { error: getErrorMessage(error) },
+      { error: getInventoryApiErrorMessage(error) },
       { status: getErrorStatus(error) }
     )
   }

@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ZodError } from "zod"
 
-import { getCurrentStoreContext } from "@/lib/products-server"
-import { createInventoryEntry } from "@/lib/inventory-server"
+import {
+  getInventoryApiErrorMessage,
+  toInventoryStockBalanceDto,
+} from "@/lib/inventory-api"
 import { inventoryEntryMutationSchema } from "@/lib/inventory"
+import {
+  createInventoryEntry,
+  getStockBalanceByProductAndLocation,
+} from "@/lib/inventory-server"
+import { getCurrentStoreContext } from "@/lib/products-server"
 
 function getErrorStatus(error: unknown) {
   if (error instanceof ZodError) {
@@ -12,7 +19,7 @@ function getErrorStatus(error: unknown) {
 
   if (
     error instanceof Error &&
-    /(quantidade|custo|produto|local|loja|estoque)/i.test(error.message)
+    /(quantidade|custo|produto|local|loja|estoque|ativo)/i.test(error.message)
   ) {
     return 400
   }
@@ -20,27 +27,12 @@ function getErrorStatus(error: unknown) {
   return 500
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof ZodError) {
-    return error.issues[0]?.message ?? "Dados inválidos."
-  }
-
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível registrar a entrada de estoque."
-}
-
 export async function POST(request: NextRequest) {
   try {
     const storeContext = await getCurrentStoreContext()
 
     if (!storeContext) {
-      return NextResponse.json(
-        { error: "Usuário não autenticado." },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
     }
 
     const body = await request.json()
@@ -50,15 +42,23 @@ export async function POST(request: NextRequest) {
       storeContext.userId,
       payload
     )
+    const balance = await getStockBalanceByProductAndLocation(
+      storeContext.storeId,
+      payload.product_id,
+      payload.location_id
+    )
+
+    if (!balance) {
+      throw new Error("Não foi possível carregar o saldo atualizado.")
+    }
 
     return NextResponse.json({
-      data: {
-        referenceId,
-      },
+      reference_id: referenceId,
+      data: toInventoryStockBalanceDto(balance),
     })
   } catch (error) {
     return NextResponse.json(
-      { error: getErrorMessage(error) },
+      { error: getInventoryApiErrorMessage(error) },
       { status: getErrorStatus(error) }
     )
   }

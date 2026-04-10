@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { FileText, ImagePlus, Loader2, UploadCloud, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/toast"
+import { parseApiError } from "@/lib/api-error"
 import { createClient as createBrowserClient } from "@/lib/supabase/client"
 import {
   buildStorageObjectPath,
@@ -14,6 +14,7 @@ import {
   PRODUCT_IMAGE_MAX_SIZE_BYTES,
   PRODUCT_IMAGES_BUCKET,
 } from "@/lib/storage"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
 type ImageUploadResult = {
@@ -223,9 +224,7 @@ export function ImageUpload({
       clearSelection()
       toast.success("Arquivo enviado com sucesso.")
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Não foi possível enviar o arquivo."
-      )
+      toast.error(parseApiError(error))
     } finally {
       window.clearInterval(progressInterval)
       setIsUploading(false)

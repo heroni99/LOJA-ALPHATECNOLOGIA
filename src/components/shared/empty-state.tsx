@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -8,6 +9,7 @@ type EmptyStateProps = {
   title: string
   description: string
   hint?: string
+  action?: ReactNode
   className?: string
 }
 
@@ -16,6 +18,7 @@ export function EmptyState({
   title,
   description,
   hint,
+  action,
   className,
 }: EmptyStateProps) {
   return (
@@ -39,6 +42,7 @@ export function EmptyState({
           {hint}
         </Badge>
       ) : null}
+      {action ? <div className="mt-5">{action}</div> : null}
     </div>
   )
 }

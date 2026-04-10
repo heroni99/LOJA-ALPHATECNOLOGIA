@@ -5,10 +5,7 @@ export const SUPPLIERS_PAGE_SIZE = 10
 type SearchParamsLike = Record<string, string | string[] | undefined>
 
 export const supplierMutationSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Informe o nome do fornecedor."),
+  name: z.string().trim().min(1, "Informe o nome do fornecedor."),
   trade_name: z.string().trim().max(180).nullable().optional(),
   cnpj: z.string().trim().max(32).nullable().optional(),
   email: z.string().trim().max(160).nullable().optional(),
@@ -25,10 +22,7 @@ export const supplierMutationSchema = z.object({
 export type SupplierMutationInput = z.infer<typeof supplierMutationSchema>
 
 export const supplierFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Informe o nome do fornecedor."),
+  name: z.string().trim().min(1, "Informe o nome do fornecedor."),
   trade_name: z.string().optional(),
   cnpj: z.string().optional(),
   email: z.string().optional(),
@@ -88,10 +82,22 @@ export type SupplierPurchaseOrder = {
   createdAt: string
 }
 
+export type SupplierPayable = {
+  id: string
+  description: string
+  amountCents: number
+  dueDate: string
+  status: string
+  paidAt: string | null
+  purchaseOrderId: string | null
+  purchaseOrderNumber: string | null
+}
+
 export type SupplierListFilters = {
   search: string
   active: boolean | null
   page: number
+  limit: number
 }
 
 export const defaultSupplierFormValues: SupplierFormValues = {
@@ -131,11 +137,16 @@ export function getSupplierListFilters(
   }
 
   const page = Number.parseInt(getValue("page") ?? "1", 10)
+  const limit = Number.parseInt(getValue("limit") ?? String(SUPPLIERS_PAGE_SIZE), 10)
 
   return {
     search: (getValue("search") ?? "").trim(),
     active: parseBooleanFilter(getValue("active")),
     page: Number.isFinite(page) && page > 0 ? page : 1,
+    limit:
+      Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.max(limit, 1), 100)
+        : SUPPLIERS_PAGE_SIZE,
   }
 }
 

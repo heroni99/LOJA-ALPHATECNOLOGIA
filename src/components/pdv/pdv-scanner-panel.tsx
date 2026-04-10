@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react"
 import { CheckCircle2, Loader2, QrCode, Smartphone } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { QRCodeSVG } from "qrcode.react"
-import { toast } from "sonner"
 
 import { SectionCard } from "@/components/shared/section-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import { createClient as createBrowserClient } from "@/lib/supabase/client"
 import type { PdvSearchResult } from "@/lib/pdv"
 import {
@@ -16,6 +17,7 @@ import {
   type ScannerPairedPayload,
   type ScannerSession,
 } from "@/lib/scanner"
+import { toast } from "@/lib/toast"
 
 type ScannerSessionApiResponse = {
   data?: ScannerSession
@@ -48,6 +50,7 @@ function getScannerStatusClasses(status: ScannerSession["status"]) {
 }
 
 export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
+  const router = useRouter()
   const onProductScannedRef = useRef(onProductScanned)
   const [supabase] = useState(() => createBrowserClient())
   const [session, setSession] = useState<ScannerSession | null>(null)
@@ -142,7 +145,8 @@ export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
       const responseData = (await response.json()) as ScannerSessionApiResponse
 
       if (!response.ok || !responseData.data) {
-        throw new Error(
+        throw createApiError(
+          response.status,
           responseData.error ?? "Não foi possível criar a sessão do scanner."
         )
       }
@@ -150,11 +154,12 @@ export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
       setSession(responseData.data)
       toast.success("Código de pareamento gerado para o scanner mobile.")
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível criar a sessão do scanner."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsCreatingSession(false)
     }

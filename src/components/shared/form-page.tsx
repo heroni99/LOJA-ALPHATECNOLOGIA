@@ -1,10 +1,13 @@
 import type { ReactNode } from "react"
 
+import type { BreadcrumbItem } from "@/components/shared/breadcrumbs"
 import { PageHeader } from "@/components/shared/page-header"
 
 type FormPageProps = {
   title: string
   description?: string
+  backHref?: string
+  breadcrumbs?: BreadcrumbItem[]
   titleSlot?: ReactNode
   children: ReactNode
   footer: ReactNode
@@ -13,6 +16,8 @@ type FormPageProps = {
 export function FormPage({
   title,
   description,
+  backHref,
+  breadcrumbs,
   titleSlot,
   children,
   footer,
@@ -22,6 +27,8 @@ export function FormPage({
       <PageHeader
         title={title}
         description={description}
+        backHref={backHref}
+        breadcrumbs={breadcrumbs}
         titleSlot={titleSlot}
       />
       <div className="pb-28">{children}</div>

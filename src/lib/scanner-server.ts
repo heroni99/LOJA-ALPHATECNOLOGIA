@@ -174,6 +174,8 @@ function mapSerializedProduct(product: ProductRecord, unit: ProductUnitRecord): 
     salePriceCents: parseDbMoneyToCents(product.sale_price),
     hasSerialControl: true,
     availableQuantity: 1,
+    imageUrl: null,
+    category: null,
     imeiOrSerial: unit.imei ?? unit.serial_number ?? unit.imei2 ?? null,
   }
 }
@@ -189,6 +191,8 @@ function mapProduct(product: ProductRecord, availableQuantity: number): PdvSearc
     salePriceCents: parseDbMoneyToCents(product.sale_price),
     hasSerialControl: false,
     availableQuantity,
+    imageUrl: null,
+    category: null,
     imeiOrSerial: null,
   }
 }

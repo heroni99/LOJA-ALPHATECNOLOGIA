@@ -1,0 +1,46 @@
+export type DashboardCashStatus = {
+  open: boolean
+  terminalName: string | null
+  operatorName: string | null
+  openedAt: string | null
+}
+
+export type DashboardTodaySnapshot = {
+  totalValueCents: number
+  count: number
+  averageTicketCents: number
+  cancelledCount: number
+  cashStatus: DashboardCashStatus
+}
+
+export type DashboardSalesByHourPoint = {
+  hour: number
+  valueCents: number
+  count: number
+}
+
+export type DashboardTopProduct = {
+  productId: string
+  name: string
+  quantitySold: number
+  totalValueCents: number
+}
+
+export type DashboardLowStockItem = {
+  id: string
+  name: string
+  internalCode: string
+  currentStock: number
+  stockMin: number
+}
+
+export type DashboardServiceOrdersSummary = {
+  open: number
+  waitingApproval: number
+  inProgress: number
+  ready: number
+}
+
+export function formatDashboardHour(hour: number) {
+  return `${String(hour).padStart(2, "0")}h`
+}

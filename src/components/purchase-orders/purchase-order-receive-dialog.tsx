@@ -6,6 +6,7 @@ import { Boxes, Download } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { useRouter } from "next/navigation"
 
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/toast"
+import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   purchaseOrderReceiveFormSchema,
   type PurchaseOrderItemSummary,
@@ -34,6 +35,7 @@ import {
   toPurchaseOrderReceiveFormValues,
   toPurchaseOrderReceiveMutationInput,
 } from "@/lib/purchase-orders"
+import { toast } from "@/lib/toast"
 
 type PurchaseOrderReceiveDialogProps = {
   purchaseOrderId: string
@@ -72,7 +74,8 @@ export function PurchaseOrderReceiveDialog({
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(
+        throw createApiError(
+          response.status,
           responseData?.error ?? "Não foi possível registrar o recebimento."
         )
       }
@@ -81,11 +84,12 @@ export function PurchaseOrderReceiveDialog({
       setOpen(false)
       router.refresh()
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível registrar o recebimento."
-      )
+      toast.error(parseApiError(error))
+
+      if (shouldRedirectToLogin(error)) {
+        router.replace("/login")
+        router.refresh()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -114,7 +118,8 @@ export function PurchaseOrderReceiveDialog({
             onSubmit={form.handleSubmit(handleSubmit)}
             className="grid gap-4"
           >
-            <div className="grid gap-4 md:grid-cols-2">
+            <fieldset disabled={isSaving} className="grid gap-4">
+              <div className="grid gap-4 md:grid-cols-2">
               <FormField
                 control={form.control}
                 name="due_date"
@@ -145,9 +150,9 @@ export function PurchaseOrderReceiveDialog({
                   </FormItem>
                 )}
               />
-            </div>
+              </div>
 
-            <div className="grid gap-3">
+              <div className="grid gap-3">
               {items.map((item, index) => (
                 <div
                   key={item.id}
@@ -186,7 +191,8 @@ export function PurchaseOrderReceiveDialog({
                   />
                 </div>
               ))}
-            </div>
+              </div>
+            </fieldset>
           </form>
         </Form>
 
@@ -194,13 +200,14 @@ export function PurchaseOrderReceiveDialog({
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancelar
           </Button>
-          <Button
+          <LoadingButton
             type="submit"
             form="purchase-order-receive-form"
-            disabled={isSaving}
+            isLoading={isSaving}
+            loadingLabel="Recebendo..."
           >
-            {isSaving ? "Recebendo..." : "Confirmar recebimento"}
-          </Button>
+            Confirmar recebimento
+          </LoadingButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

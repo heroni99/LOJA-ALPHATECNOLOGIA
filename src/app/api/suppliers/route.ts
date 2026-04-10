@@ -3,19 +3,8 @@ import { ZodError } from "zod"
 
 import { getCurrentStoreContext } from "@/lib/products-server"
 import { supplierMutationSchema, getSupplierListFilters } from "@/lib/suppliers"
-import { createSupplier, listSuppliers } from "@/lib/suppliers-server"
-
-function getValidationMessage(error: unknown) {
-  if (error instanceof ZodError) {
-    return error.issues[0]?.message ?? "Dados inválidos."
-  }
-
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível processar a requisição."
-}
+import { getSupplierApiErrorMessage, toSupplierDetailDto, toSupplierSummaryDto } from "@/lib/suppliers-api"
+import { createSupplier, getSupplierFullDetail, listSuppliers } from "@/lib/suppliers-server"
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,18 +20,14 @@ export async function GET(request: NextRequest) {
     const result = await listSuppliers(storeContext.storeId, filters)
 
     return NextResponse.json({
-      data: result.items,
-      meta: {
-        page: result.page,
-        pageSize: result.pageSize,
-        totalCount: result.totalCount,
-        totalPages: result.totalPages,
-        filters,
-      },
+      data: result.items.map(toSupplierSummaryDto),
+      total: result.totalCount,
+      page: result.page,
+      limit: result.pageSize,
     })
   } catch (error) {
     return NextResponse.json(
-      { error: getValidationMessage(error) },
+      { error: getSupplierApiErrorMessage(error) },
       { status: 500 }
     )
   }
@@ -58,12 +43,29 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const payload = supplierMutationSchema.parse(body)
-    const supplier = await createSupplier(storeContext.storeId, payload)
+    const created = await createSupplier(storeContext.storeId, payload)
 
-    return NextResponse.json({ data: supplier }, { status: 201 })
+    if (!created) {
+      throw new Error("Não foi possível carregar o fornecedor criado.")
+    }
+
+    const detail = await getSupplierFullDetail(created.id, storeContext.storeId)
+
+    return NextResponse.json(
+      {
+        data: detail
+          ? toSupplierDetailDto(detail.supplier, {
+              products: detail.products,
+              purchaseOrders: detail.purchaseOrders,
+              payables: detail.payables,
+            })
+          : toSupplierDetailDto(created),
+      },
+      { status: 201 }
+    )
   } catch (error) {
     return NextResponse.json(
-      { error: getValidationMessage(error) },
+      { error: getSupplierApiErrorMessage(error) },
       { status: error instanceof ZodError ? 400 : 500 }
     )
   }

@@ -2,15 +2,12 @@ import { z } from "zod"
 
 import {
   formatCentsToBRL,
-  formatCurrencyInputFromCents,
   formatDateTime,
   formatQuantity,
-  maskCurrencyInput,
-  parseCurrencyInputToCents,
 } from "@/lib/products"
 
 export const PDV_CART_STORAGE_KEY = "alpha-tecnologia:pdv-cart"
-export const PDV_SEARCH_RESULT_LIMIT = 10
+export const PDV_SEARCH_RESULT_LIMIT = 8
 
 export const pdvPaymentMethodSchema = z.enum([
   "CASH",
@@ -20,6 +17,11 @@ export const pdvPaymentMethodSchema = z.enum([
 ])
 
 export type PdvPaymentMethod = z.infer<typeof pdvPaymentMethodSchema>
+
+export type PdvCategorySummary = {
+  id: string | null
+  name: string
+}
 
 export type PdvSearchResult = {
   key: string
@@ -31,6 +33,8 @@ export type PdvSearchResult = {
   salePriceCents: number
   hasSerialControl: boolean
   availableQuantity: number
+  imageUrl: string | null
+  category: PdvCategorySummary | null
   imeiOrSerial: string | null
 }
 
@@ -45,17 +49,24 @@ export type PdvCartItem = {
   hasSerialControl: boolean
   imeiOrSerial: string | null
   availableQuantity: number
+  imageUrl: string | null
+  category: PdvCategorySummary | null
 }
 
-export type PdvDiscountInput = {
-  mode: "amount" | "percent"
-  value: string
-}
+export type PdvDiscountInput =
+  | {
+      mode: "amount"
+      valueCents: number
+    }
+  | {
+      mode: "percent"
+      value: string
+    }
 
 export type PdvPaymentLine = {
   id: string
   method: PdvPaymentMethod
-  amountInput: string
+  amountCents: number
 }
 
 export type PdvCustomerOption = {
@@ -68,17 +79,13 @@ export type PdvCheckoutItemInput = {
   product_id: string
   product_unit_id?: string | null
   quantity: number
+  unit_price: number
+  discount_amount?: number | null
 }
 
 export type PdvCheckoutPaymentInput = {
   method: PdvPaymentMethod
   amount: number
-  installments?: number
-}
-
-export type PdvCheckoutDiscountInput = {
-  mode: "amount" | "percent"
-  value: number
 }
 
 export type PdvCompletedSaleItem = {
@@ -90,6 +97,7 @@ export type PdvCompletedSaleItem = {
   imeiOrSerial: string | null
   quantity: number
   unitPriceCents: number
+  discountAmountCents: number
   totalPriceCents: number
 }
 
@@ -135,21 +143,30 @@ export type PdvCartSummary = {
 }
 
 export const pdvCheckoutSchema = z.object({
-  cash_session_id: z.string().uuid("Sessão de caixa inválida."),
   customer_id: z.string().uuid().nullable().optional(),
-  discount: z
-    .object({
-      mode: z.enum(["amount", "percent"]),
-      value: z.number().min(0, "Desconto inválido."),
-    })
+  discount_amount: z
+    .number()
+    .int("Desconto inválido.")
+    .min(0, "Desconto inválido.")
     .nullable()
     .optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
   items: z
     .array(
       z.object({
         product_id: z.string().uuid("Produto inválido."),
         product_unit_id: z.string().uuid().nullable().optional(),
         quantity: z.number().positive("Quantidade inválida."),
+        unit_price: z
+          .number()
+          .int("Preço unitário inválido.")
+          .min(0, "Preço unitário inválido."),
+        discount_amount: z
+          .number()
+          .int("Desconto do item inválido.")
+          .min(0, "Desconto do item inválido.")
+          .nullable()
+          .optional(),
       })
     )
     .min(1, "Adicione pelo menos um item."),
@@ -157,11 +174,6 @@ export const pdvCheckoutSchema = z.object({
     z.object({
       method: pdvPaymentMethodSchema,
       amount: z.number().int("Valor inválido.").positive("Valor inválido."),
-      installments: z
-        .number()
-        .int("Parcelas inválidas.")
-        .positive("Parcelas inválidas.")
-        .optional(),
     })
   ),
 })
@@ -170,7 +182,7 @@ export type PdvCheckoutInput = z.infer<typeof pdvCheckoutSchema>
 
 export const defaultPdvDiscount: PdvDiscountInput = {
   mode: "amount",
-  value: "0,00",
+  valueCents: 0,
 }
 
 export function getPdvPaymentMethodLabel(method: PdvPaymentMethod) {
@@ -200,7 +212,7 @@ export function createPdvPaymentLine(
   return {
     id: `${method}-${Math.random().toString(36).slice(2, 10)}`,
     method,
-    amountInput: formatCurrencyInputFromCents(suggestedAmountCents),
+    amountCents: Math.max(0, suggestedAmountCents),
   }
 }
 
@@ -208,34 +220,17 @@ export function getCartItemSubtotalCents(item: PdvCartItem) {
   return Math.round(item.unitPriceCents * item.quantity)
 }
 
-export function parsePdvDiscountInput(discount: PdvDiscountInput) {
-  if (discount.mode === "amount") {
-    return {
-      mode: "amount" as const,
-      value: parseCurrencyInputToCents(discount.value),
-    }
-  }
-
-  const normalized = discount.value.replace(",", ".").trim()
-  const parsed = Number(normalized)
-
-  return {
-    mode: "percent" as const,
-    value: Number.isFinite(parsed) ? parsed : 0,
-  }
-}
-
 export function resolveDiscountAmountCents(
   subtotalCents: number,
   discount: PdvDiscountInput
 ) {
-  const parsedDiscount = parsePdvDiscountInput(discount)
-
-  if (parsedDiscount.mode === "amount") {
-    return clampDiscount(Math.round(parsedDiscount.value), subtotalCents)
+  if (discount.mode === "amount") {
+    return clampDiscount(discount.valueCents, subtotalCents)
   }
 
-  const percentage = Math.min(Math.max(parsedDiscount.value, 0), 100)
+  const normalized = discount.value.replace(",", ".").trim()
+  const parsed = Number(normalized)
+  const percentage = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 100) : 0
 
   return clampDiscount(Math.round((subtotalCents * percentage) / 100), subtotalCents)
 }
@@ -251,34 +246,30 @@ export function buildPdvCartSummary(
   )
   const discountAmountCents = resolveDiscountAmountCents(subtotalCents, discount)
   const totalCents = Math.max(0, subtotalCents - discountAmountCents)
-  const normalizedPayments = paymentLines.map((payment) => ({
-    ...payment,
-    enteredAmountCents: parseCurrencyInputToCents(payment.amountInput),
-  }))
-  const totalPaidCents = normalizedPayments.reduce(
-    (total, payment) => total + payment.enteredAmountCents,
+  const totalPaidCents = paymentLines.reduce(
+    (total, payment) => total + payment.amountCents,
     0
   )
-  const nonCashPaidCents = normalizedPayments
+  const nonCashPaidCents = paymentLines
     .filter((payment) => payment.method !== "CASH")
-    .reduce((total, payment) => total + payment.enteredAmountCents, 0)
-  const cashReceivedCents = normalizedPayments
+    .reduce((total, payment) => total + payment.amountCents, 0)
+  const cashReceivedCents = paymentLines
     .filter((payment) => payment.method === "CASH")
-    .reduce((total, payment) => total + payment.enteredAmountCents, 0)
+    .reduce((total, payment) => total + payment.amountCents, 0)
 
   let remainingCents = totalCents
-  const appliedPayments = normalizedPayments.map((payment) => {
+  const appliedPayments = paymentLines.map((payment) => {
     const appliedAmountCents =
       payment.method === "CASH"
-        ? Math.min(payment.enteredAmountCents, Math.max(remainingCents, 0))
-        : payment.enteredAmountCents
+        ? Math.min(payment.amountCents, Math.max(remainingCents, 0))
+        : payment.amountCents
 
     remainingCents = Math.max(remainingCents - appliedAmountCents, 0)
 
     return {
       id: payment.id,
       method: payment.method,
-      enteredAmountCents: payment.enteredAmountCents,
+      enteredAmountCents: payment.amountCents,
       appliedAmountCents,
     }
   })
@@ -310,10 +301,6 @@ export function buildPdvCartSummary(
   }
 }
 
-export function formatPdvCurrencyInput(value: string) {
-  return maskCurrencyInput(value)
-}
-
 export function getSuggestedPaymentAmountCents(summary: PdvCartSummary) {
   return Math.max(summary.totalCents - summary.totalPaidCents, 0)
 }
@@ -322,27 +309,27 @@ export function toPdvCheckoutPayload(
   cartItems: PdvCartItem[],
   paymentLines: PdvPaymentLine[],
   discount: PdvDiscountInput,
-  cashSessionId: string,
-  customerId?: string | null
+  customerId?: string | null,
+  notes?: string | null
 ): PdvCheckoutInput {
-  const parsedDiscount = parsePdvDiscountInput(discount)
   const payload = {
-    cash_session_id: cashSessionId,
     customer_id: normalizeOptionalUuid(customerId),
-    discount:
-      parsedDiscount.value > 0
-        ? parsedDiscount
-        : null,
+    discount_amount: resolveDiscountAmountCents(
+      cartItems.reduce((total, item) => total + getCartItemSubtotalCents(item), 0),
+      discount
+    ),
+    notes: normalizeOptionalString(notes),
     items: cartItems.map((item) => ({
       product_id: item.productId,
       product_unit_id: item.productUnitId ?? null,
       quantity: item.quantity,
+      unit_price: item.unitPriceCents,
+      discount_amount: 0,
     })),
     payments: paymentLines
       .map((payment) => ({
         method: payment.method,
-        amount: parseCurrencyInputToCents(payment.amountInput),
-        installments: 1,
+        amount: payment.amountCents,
       }))
       .filter((payment) => payment.amount > 0),
   }
@@ -354,14 +341,18 @@ export function formatPdvReceiptItemQuantity(quantity: number) {
   return formatQuantity(quantity)
 }
 
-export { formatCentsToBRL, formatDateTime, formatCurrencyInputFromCents }
+export { formatCentsToBRL, formatDateTime }
 
 function clampDiscount(discountAmountCents: number, subtotalCents: number) {
   return Math.min(Math.max(discountAmountCents, 0), Math.max(subtotalCents, 0))
 }
 
-function normalizeOptionalUuid(value: string | null | undefined) {
+function normalizeOptionalString(value: string | null | undefined) {
   const normalized = value?.trim() ?? ""
 
   return normalized.length > 0 ? normalized : null
+}
+
+function normalizeOptionalUuid(value: string | null | undefined) {
+  return normalizeOptionalString(value)
 }

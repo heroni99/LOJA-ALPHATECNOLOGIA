@@ -8,6 +8,7 @@ import {
 import { notFound } from "next/navigation"
 
 import { CashActions } from "@/components/cash/cash-actions"
+import { CashSessionElapsed } from "@/components/cash/cash-session-elapsed"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
@@ -17,30 +18,40 @@ import { Badge } from "@/components/ui/badge"
 import {
   formatCentsToBRL,
   formatDateTime,
-  formatElapsedTime,
   getCashMovementLabel,
   type CashMovement,
 } from "@/lib/cash"
 import { getCashDashboardData } from "@/lib/cash-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
 
+function CashMovementTypeBadge({ type }: { type: string }) {
+  const classes =
+    {
+      OPENING: "border-slate-200 bg-slate-50 text-slate-700",
+      SALE: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      SUPPLY: "border-sky-200 bg-sky-50 text-sky-700",
+      WITHDRAWAL: "border-orange-200 bg-orange-50 text-orange-700",
+      CLOSING: "border-violet-200 bg-violet-50 text-violet-700",
+      REFUND: "border-rose-200 bg-rose-50 text-rose-700",
+    }[type] ?? "border-border bg-muted text-foreground"
+
+  return (
+    <Badge variant="outline" className={classes}>
+      {getCashMovementLabel(type)}
+    </Badge>
+  )
+}
+
 const movementColumns: DataTableColumn<CashMovement>[] = [
   {
     key: "created_at",
-    header: "Horário",
+    header: "Data / Hora",
     cell: (movement) => formatDateTime(movement.createdAt),
   },
   {
     key: "movement_type",
     header: "Tipo",
-    cell: (movement) => getCashMovementLabel(movement.movementType),
-  },
-  {
-    key: "amount",
-    header: "Valor",
-    cell: (movement) => formatCentsToBRL(movement.amountCents),
-    className: "text-right",
-    headClassName: "text-right",
+    cell: (movement) => <CashMovementTypeBadge type={movement.movementType} />,
   },
   {
     key: "description",
@@ -49,9 +60,11 @@ const movementColumns: DataTableColumn<CashMovement>[] = [
     className: "whitespace-normal",
   },
   {
-    key: "user_name",
-    header: "Responsável",
-    cell: (movement) => movement.userName ?? "Operador",
+    key: "amount",
+    header: "Valor",
+    cell: (movement) => formatCentsToBRL(movement.amountCents),
+    className: "text-right font-medium",
+    headClassName: "text-right",
   },
 ]
 
@@ -74,15 +87,17 @@ export default async function CashPage() {
         titleSlot={
           <>
             <Badge variant="outline" className="border-primary/20 text-primary">
-              {session.terminalName}
+              Terminal ativo: {session.terminalName}
             </Badge>
-            <Badge variant="outline">Operador: {session.operatorName}</Badge>
+            <Badge variant="outline">
+              Operador: {session.operatorName || "Sistema"}
+            </Badge>
             <Badge variant="outline">
               Abertura: {formatDateTime(session.openedAt)}
             </Badge>
             <Badge variant="outline">
               <Clock3 />
-              {formatElapsedTime(session.openedAt)}
+              <CashSessionElapsed openedAt={session.openedAt} />
             </Badge>
           </>
         }
@@ -92,15 +107,15 @@ export default async function CashPage() {
 
       <div className="grid gap-4 xl:grid-cols-4">
         <StatCard
-          title="Total vendas do dia"
+          title="Vendas do dia"
           value={formatCentsToBRL(summary.totalSalesCents)}
-          description="Total das vendas vinculadas à sessão atual."
+          description="Soma dos movimentos do tipo venda na sessão atual."
           icon={<Receipt className="size-5" />}
         />
         <StatCard
-          title="Qtd. vendas"
+          title="Qtd. de vendas"
           value={summary.salesCount}
-          description="Quantidade de vendas concluídas na sessão."
+          description="Quantidade de movimentos de venda na sessão atual."
           icon={<Wallet className="size-5" />}
         />
         <StatCard
@@ -157,7 +172,7 @@ export default async function CashPage() {
 
       <SectionCard
         title="Movimentos recentes"
-        description="Últimos 20 lançamentos da sessão atual de caixa."
+        description="Últimos 30 lançamentos da sessão atual de caixa."
       >
         <DataTable
           columns={movementColumns}

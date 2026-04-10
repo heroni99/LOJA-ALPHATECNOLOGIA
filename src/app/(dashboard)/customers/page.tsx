@@ -2,7 +2,11 @@ import Link from "next/link"
 import { ChevronLeft, ChevronRight, Plus, Users } from "lucide-react"
 import { notFound } from "next/navigation"
 
-import { CustomerSummary, getCustomerListFilters } from "@/lib/customers"
+import {
+  CUSTOMERS_PAGE_SIZE,
+  CustomerSummary,
+  getCustomerListFilters,
+} from "@/lib/customers"
 import { listCustomers } from "@/lib/customers-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
 import { CustomersFilters } from "@/components/customers/customers-filters"
@@ -32,6 +36,10 @@ function buildPageHref(
     params.set("active", String(filters.active))
   }
 
+  if (filters.limit !== CUSTOMERS_PAGE_SIZE) {
+    params.set("limit", String(filters.limit))
+  }
+
   if (page > 1) {
     params.set("page", String(page))
   }
@@ -59,9 +67,12 @@ const customerColumns: DataTableColumn<CustomerSummary>[] = [
     cell: (customer) => customer.cpfCnpj ?? "Não informado",
   },
   {
-    key: "city",
-    header: "Cidade",
-    cell: (customer) => customer.city ?? "Não informada",
+    key: "city_state",
+    header: "Cidade / UF",
+    cell: (customer) =>
+      customer.city || customer.state
+        ? [customer.city, customer.state].filter(Boolean).join(" / ")
+        : "Não informada",
   },
   {
     key: "status",

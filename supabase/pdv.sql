@@ -3,10 +3,9 @@ begin;
 create or replace function public.sales_checkout(
   p_store_id uuid,
   p_user_id uuid,
-  p_cash_session_id uuid,
   p_customer_id uuid default null,
-  p_discount_mode text default null,
-  p_discount_value numeric default 0,
+  p_discount_amount numeric default 0,
+  p_notes text default null,
   p_items jsonb default '[]'::jsonb,
   p_payments jsonb default '[]'::jsonb
 )
@@ -15,14 +14,14 @@ language plpgsql
 set search_path = public
 as $$
 declare
+  v_cash_session_id uuid;
   v_sale_id uuid := gen_random_uuid();
   v_sale_number text;
-  v_sale_sequence integer;
   v_default_location_id uuid;
   v_default_location_name text;
-  v_store_timezone text := 'America/Sao_Paulo';
-  v_sale_date_token text;
   v_subtotal numeric := 0;
+  v_item_discount_total numeric := 0;
+  v_global_discount_amount numeric := 0;
   v_discount_amount numeric := 0;
   v_total numeric := 0;
   v_total_received numeric := 0;
@@ -32,7 +31,9 @@ declare
   v_change_amount numeric := 0;
   v_remaining_total numeric := 0;
   v_available_balance numeric := 0;
-  v_item_total numeric := 0;
+  v_item_gross_total numeric := 0;
+  v_item_discount_line numeric := 0;
+  v_item_net_total numeric := 0;
   v_applied_payment_amount numeric := 0;
   v_payment_count integer := 0;
   v_installments integer := 1;
@@ -42,6 +43,14 @@ declare
   v_requested record;
   v_payment record;
 begin
+  if p_store_id is null then
+    raise exception 'A loja da venda é obrigatória.';
+  end if;
+
+  if p_user_id is null then
+    raise exception 'O usuário responsável pela venda é obrigatório.';
+  end if;
+
   if jsonb_typeof(coalesce(p_items, '[]'::jsonb)) <> 'array'
      or jsonb_array_length(coalesce(p_items, '[]'::jsonb)) = 0 then
     raise exception 'Adicione pelo menos um item para concluir a venda.';
@@ -49,16 +58,6 @@ begin
 
   if jsonb_typeof(coalesce(p_payments, '[]'::jsonb)) <> 'array' then
     raise exception 'Os pagamentos da venda são inválidos.';
-  end if;
-
-  select
-    coalesce(nullif(s.timezone, ''), 'America/Sao_Paulo')
-  into v_store_timezone
-  from public.stores s
-  where s.id = p_store_id;
-
-  if not found then
-    raise exception 'A loja informada não foi encontrada.';
   end if;
 
   select
@@ -78,15 +77,10 @@ begin
     raise exception 'Configure um local de estoque padrão antes de vender no PDV.';
   end if;
 
-  if not exists (
-    select 1
-    from public.cash_sessions cs
-    join public.cash_terminals ct on ct.id = cs.cash_terminal_id
-    where cs.id = p_cash_session_id
-      and cs.status = 'OPEN'
-      and ct.store_id = p_store_id
-  ) then
-    raise exception 'A sessão de caixa informada não está aberta para a loja atual.';
+  v_cash_session_id := public.cash_get_or_create_current_session(p_store_id);
+
+  if v_cash_session_id is null then
+    raise exception 'Não foi possível abrir a sessão atual do caixa.';
   end if;
 
   if p_customer_id is not null and not exists (
@@ -102,11 +96,15 @@ begin
     select
       item.product_id,
       item.product_unit_id,
-      item.quantity
+      item.quantity,
+      item.unit_price,
+      coalesce(item.discount_amount, 0) as discount_amount
     from jsonb_to_recordset(coalesce(p_items, '[]'::jsonb)) as item(
       product_id uuid,
       product_unit_id uuid,
-      quantity numeric
+      quantity numeric,
+      unit_price numeric,
+      discount_amount numeric
     )
   loop
     if v_item.product_id is null then
@@ -117,15 +115,20 @@ begin
       raise exception 'A quantidade dos itens da venda deve ser maior que zero.';
     end if;
 
+    if v_item.unit_price is null or v_item.unit_price < 0 then
+      raise exception 'O preço unitário de um item da venda é inválido.';
+    end if;
+
+    if v_item.discount_amount is null or v_item.discount_amount < 0 then
+      raise exception 'O desconto de um item da venda é inválido.';
+    end if;
+
     select
       p.id,
       p.name,
       p.internal_code,
-      p.sale_price,
       p.cost_price,
-      p.has_serial_control,
-      p.active,
-      p.is_service
+      p.has_serial_control
     into v_product
     from public.products p
     where p.id = v_item.product_id
@@ -165,8 +168,15 @@ begin
       end if;
     end if;
 
-    v_item_total := round(v_item.quantity * coalesce(v_product.sale_price, 0));
-    v_subtotal := v_subtotal + coalesce(v_item_total, 0);
+    v_item_gross_total := round(v_item.quantity * v_item.unit_price);
+    v_item_discount_line := greatest(round(v_item.discount_amount), 0);
+
+    if v_item_discount_line > v_item_gross_total then
+      raise exception 'O desconto de um item não pode ser maior que seu subtotal.';
+    end if;
+
+    v_subtotal := v_subtotal + v_item_gross_total;
+    v_item_discount_total := v_item_discount_total + v_item_discount_line;
   end loop;
 
   for v_requested in
@@ -176,7 +186,9 @@ begin
     from jsonb_to_recordset(coalesce(p_items, '[]'::jsonb)) as item(
       product_id uuid,
       product_unit_id uuid,
-      quantity numeric
+      quantity numeric,
+      unit_price numeric,
+      discount_amount numeric
     )
     group by item.product_id
   loop
@@ -204,32 +216,21 @@ begin
     end if;
   end loop;
 
-  if nullif(btrim(coalesce(p_discount_mode, '')), '') is null then
-    v_discount_amount := 0;
-  elsif p_discount_mode = 'amount' then
-    v_discount_amount := greatest(round(coalesce(p_discount_value, 0)), 0);
-  elsif p_discount_mode = 'percent' then
-    if coalesce(p_discount_value, 0) < 0 or coalesce(p_discount_value, 0) > 100 then
-      raise exception 'O desconto percentual deve ficar entre 0 e 100.';
-    end if;
-
-    v_discount_amount := round(v_subtotal * coalesce(p_discount_value, 0) / 100);
-  else
-    raise exception 'O modo de desconto informado é inválido.';
+  if coalesce(p_discount_amount, 0) < 0 then
+    raise exception 'O desconto geral da venda é inválido.';
   end if;
 
-  v_discount_amount := least(v_discount_amount, v_subtotal);
+  v_global_discount_amount := greatest(round(coalesce(p_discount_amount, 0)), 0);
+  v_discount_amount := least(v_item_discount_total + v_global_discount_amount, v_subtotal);
   v_total := greatest(v_subtotal - v_discount_amount, 0);
 
   for v_payment in
     select
       payment.method,
-      payment.amount,
-      coalesce(payment.installments, 1) as installments
+      payment.amount
     from jsonb_to_recordset(coalesce(p_payments, '[]'::jsonb)) as payment(
       method text,
-      amount numeric,
-      installments integer
+      amount numeric
     )
   loop
     v_payment_count := v_payment_count + 1;
@@ -240,10 +241,6 @@ begin
 
     if v_payment.amount is null or v_payment.amount <= 0 then
       raise exception 'Todos os pagamentos devem informar um valor maior que zero.';
-    end if;
-
-    if v_payment.installments is null or v_payment.installments <= 0 then
-      raise exception 'As parcelas do pagamento devem ser maiores que zero.';
     end if;
 
     v_total_received := v_total_received + v_payment.amount;
@@ -277,27 +274,26 @@ begin
     end if;
   end if;
 
-  v_sale_date_token := to_char(
-    now() at time zone v_store_timezone,
-    'YYYYMMDD'
-  );
-
   perform pg_advisory_xact_lock(
-    hashtext(p_store_id::text),
-    hashtext(v_sale_date_token)
+    hashtext('sales_checkout'),
+    hashtext(p_store_id::text)
   );
 
-  select count(*) + 1
-  into v_sale_sequence
-  from public.sales s
-  where s.store_id = p_store_id
-    and to_char(s.created_at at time zone v_store_timezone, 'YYYYMMDD') = v_sale_date_token;
+  loop
+    v_sale_number := format(
+      'VDA-%s',
+      floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+    );
 
-  v_sale_number := format(
-    'VEN-%s-%s',
-    v_sale_date_token,
-    lpad(v_sale_sequence::text, 3, '0')
-  );
+    exit when not exists (
+      select 1
+      from public.sales s
+      where s.store_id = p_store_id
+        and s.sale_number = v_sale_number
+    );
+
+    perform pg_sleep(0.001);
+  end loop;
 
   insert into public.sales (
     id,
@@ -310,6 +306,7 @@ begin
     discount_amount,
     total,
     status,
+    notes,
     completed_at
   )
   values (
@@ -318,11 +315,12 @@ begin
     p_store_id,
     p_customer_id,
     p_user_id,
-    p_cash_session_id,
+    v_cash_session_id,
     v_subtotal,
     v_discount_amount,
     v_total,
     'COMPLETED',
+    nullif(btrim(coalesce(p_notes, '')), ''),
     now()
   );
 
@@ -330,18 +328,21 @@ begin
     select
       item.product_id,
       item.product_unit_id,
-      item.quantity
+      item.quantity,
+      item.unit_price,
+      coalesce(item.discount_amount, 0) as discount_amount
     from jsonb_to_recordset(coalesce(p_items, '[]'::jsonb)) as item(
       product_id uuid,
       product_unit_id uuid,
-      quantity numeric
+      quantity numeric,
+      unit_price numeric,
+      discount_amount numeric
     )
   loop
     select
       p.id,
       p.name,
       p.internal_code,
-      p.sale_price,
       p.cost_price,
       p.has_serial_control
     into v_product
@@ -350,8 +351,10 @@ begin
       and p.store_id = p_store_id
     for update;
 
-    v_item_total := round(v_item.quantity * coalesce(v_product.sale_price, 0));
-    v_unit_purchase_price := coalesce(v_product.cost_price, 0);
+    v_item_gross_total := round(v_item.quantity * v_item.unit_price);
+    v_item_discount_line := greatest(round(coalesce(v_item.discount_amount, 0)), 0);
+    v_item_net_total := greatest(v_item_gross_total - v_item_discount_line, 0);
+    v_unit_purchase_price := greatest(coalesce(v_product.cost_price, 0), 0);
 
     if v_product.has_serial_control then
       select
@@ -376,9 +379,9 @@ begin
       v_item.product_id,
       v_item.product_unit_id,
       v_item.quantity,
-      coalesce(v_product.sale_price, 0),
-      0,
-      v_item_total
+      v_item.unit_price,
+      v_item_discount_line,
+      v_item_net_total
     );
 
     update public.stock_balances
@@ -426,15 +429,13 @@ begin
   for v_payment in
     select
       payment.method,
-      payment.amount,
-      coalesce(payment.installments, 1) as installments
+      payment.amount
     from jsonb_to_recordset(coalesce(p_payments, '[]'::jsonb)) as payment(
       method text,
-      amount numeric,
-      installments integer
+      amount numeric
     )
   loop
-    v_installments := coalesce(v_payment.installments, 1);
+    v_installments := 1;
     v_applied_payment_amount := case
       when v_payment.method = 'CASH' then least(v_payment.amount, greatest(v_remaining_total, 0))
       else v_payment.amount
@@ -480,7 +481,7 @@ begin
       user_id
     )
     values (
-      p_cash_session_id,
+      v_cash_session_id,
       'SALE',
       v_cash_applied,
       'CASH',

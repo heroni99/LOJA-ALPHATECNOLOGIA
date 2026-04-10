@@ -20,7 +20,7 @@ As mesmas variáveis são necessárias no Vercel para deploy automático (veja c
 
 ## Supabase
 
-Toda a configuração inicial do banco está em `supabase/schema.sql` e o seed em `supabase/seed.sql`. Para instruções passo a passo (rodar schema, seed, políticas e storage) consulte `supabase/README.md`.
+Toda a configuração inicial do banco está em `supabase/schema.sql`, nos SQLs modulares de `supabase/` e no seed em `supabase/seed.sql`. Para a ordem correta de execução no Supabase consulte `supabase/README.md`.
 
 ## Deploy no Vercel
 
@@ -34,4 +34,3 @@ Toda a configuração inicial do banco está em `supabase/schema.sql` e o seed e
 1. Definir `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` e `NEXT_PUBLIC_APP_URL` no Vercel.
 2. Dar push em `main`.
 3. Validar funcionalidades chave: autenticação, PDV, scanner, upload de imagens.
-

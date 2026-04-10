@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ZodError } from "zod"
 
+import { toPdvCompletedSaleDto } from "@/lib/pdv-api"
 import { pdvCheckoutSchema } from "@/lib/pdv"
 import { checkoutPdvSale } from "@/lib/pdv-server"
 import { getCurrentStoreContext } from "@/lib/products-server"
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
       payload
     )
 
-    return NextResponse.json({ data: sale }, { status: 201 })
+    return NextResponse.json({ data: toPdvCompletedSaleDto(sale) }, { status: 201 })
   } catch (error) {
     return NextResponse.json(
       { error: getValidationMessage(error) },

@@ -11,6 +11,8 @@ import {
   type InventoryLocationOption,
   type InventoryMovement,
   type InventoryMovementsFilters,
+  type InventoryProductOption,
+  type InventoryStockBalanceSnapshot,
   type InventoryTransferMutationInput,
   type StockLocationMutationInput,
 } from "@/lib/inventory"
@@ -22,7 +24,10 @@ type InventoryProductRecord = {
   name: string
   category_id: string | null
   stock_min: number | string | null
-  categories?: { id: string; name: string | null } | { id: string; name: string | null }[] | null
+  categories?:
+    | { id: string; name: string | null }
+    | { id: string; name: string | null }[]
+    | null
   stock_balances?:
     | {
         quantity: number | string | null
@@ -33,6 +38,12 @@ type InventoryProductRecord = {
           | null
       }[]
     | null
+}
+
+type InventoryProductOptionRecord = {
+  id: string
+  internal_code: string
+  name: string
 }
 
 type StockLocationRecord = {
@@ -46,6 +57,7 @@ type StockLocationRecord = {
 
 type InventoryMovementRecord = {
   id: string
+  product_id: string
   created_at: string
   movement_type: string
   quantity: number | string | null
@@ -67,6 +79,12 @@ type InventoryMovementRecord = {
     | null
 }
 
+type ProductRecord = {
+  id: string
+  store_id: string
+  is_service: boolean
+}
+
 type ListInventoryBalancesResult = {
   items: InventoryBalanceRow[]
   totalCount: number
@@ -84,6 +102,13 @@ type ListInventoryMovementsResult = {
   pageSize: number
 }
 
+type DatabaseErrorLike = {
+  code?: string
+  message?: string
+  details?: string | null
+  hint?: string | null
+}
+
 function getSingleRelation<T>(value: T | T[] | null | undefined) {
   if (Array.isArray(value)) {
     return value[0] ?? null
@@ -92,7 +117,54 @@ function getSingleRelation<T>(value: T | T[] | null | undefined) {
   return value ?? null
 }
 
-function mapInventoryBalanceRow(record: InventoryProductRecord): InventoryBalanceRow {
+function isDatabaseErrorLike(error: unknown): error is DatabaseErrorLike {
+  return typeof error === "object" && error !== null
+}
+
+function normalizeInventoryError(error: unknown) {
+  if (!isDatabaseErrorLike(error)) {
+    return error
+  }
+
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ")
+
+  if (
+    error.code === "PGRST202" ||
+    /Could not find the function public\.inventory_/i.test(message)
+  ) {
+    return new Error(
+      "As funções de estoque não estão instaladas no banco. Execute `supabase/inventory.sql` no Supabase antes de usar este módulo."
+    )
+  }
+
+  if (
+    error.code === "23505" &&
+    /stock_locations_store_id_name_key/i.test(message)
+  ) {
+    return new Error("Já existe um local com esse nome na loja atual.")
+  }
+
+  if (
+    error.code === "23505" &&
+    /idx_stock_locations_single_default_per_store/i.test(message)
+  ) {
+    return new Error("Já existe outro local padrão para esta loja. Tente novamente.")
+  }
+
+  if (
+    error.code === "23514" &&
+    /stock_locations_default_must_be_active_check/i.test(message)
+  ) {
+    return new Error("O local padrão precisa permanecer ativo.")
+  }
+
+  return new Error(error.message ?? "Não foi possível processar a operação de estoque.")
+}
+
+function mapInventoryBalanceRow(
+  record: InventoryProductRecord,
+  locationId: string | null
+): InventoryBalanceRow {
   const category = getSingleRelation(record.categories)
   const locationBalances = (record.stock_balances ?? []).map((balance) => {
     const location = getSingleRelation(balance.stock_locations)
@@ -105,10 +177,14 @@ function mapInventoryBalanceRow(record: InventoryProductRecord): InventoryBalanc
     }
   })
   const stockMin = Number(record.stock_min ?? 0)
+  const normalizedStockMin = Number.isFinite(stockMin) ? stockMin : 0
   const totalQuantity = locationBalances.reduce(
     (accumulator, balance) => accumulator + balance.quantity,
     0
   )
+  const displayQuantity = locationId
+    ? locationBalances.find((balance) => balance.locationId === locationId)?.quantity ?? 0
+    : totalQuantity
 
   return {
     id: record.id,
@@ -116,9 +192,10 @@ function mapInventoryBalanceRow(record: InventoryProductRecord): InventoryBalanc
     productName: record.name,
     categoryId: record.category_id,
     categoryName: category?.name ?? null,
-    stockMin: Number.isFinite(stockMin) ? stockMin : 0,
+    stockMin: normalizedStockMin,
     totalQuantity,
-    isBelowMin: totalQuantity < (Number.isFinite(stockMin) ? stockMin : 0),
+    displayQuantity,
+    isBelowMin: displayQuantity < normalizedStockMin,
     locationBalances,
   }
 }
@@ -143,7 +220,7 @@ function mapInventoryMovement(record: InventoryMovementRecord): InventoryMovemen
     id: record.id,
     createdAt: record.created_at,
     movementType: record.movement_type,
-    productId: product?.id ?? "",
+    productId: record.product_id || product?.id || "",
     productName: product?.name ?? "Produto não encontrado",
     internalCode: product?.internal_code ?? "N/A",
     locationId: record.location_id,
@@ -154,6 +231,40 @@ function mapInventoryMovement(record: InventoryMovementRecord): InventoryMovemen
     notes: record.notes,
     userName: profile?.name ?? null,
   }
+}
+
+async function getProductRecord(storeId: string, productId: string) {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, store_id, is_service")
+    .eq("store_id", storeId)
+    .eq("id", productId)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return (data as ProductRecord | null) ?? null
+}
+
+async function ensureProductCanManageStock(storeId: string, productId: string) {
+  const product = await getProductRecord(storeId, productId)
+
+  if (!product || product.is_service) {
+    throw new Error("O produto informado não pertence à loja atual ou não controla estoque.")
+  }
+}
+
+async function ensureLocationBelongsToStore(storeId: string, locationId: string) {
+  const location = await getStockLocationById(locationId, storeId)
+
+  if (!location) {
+    throw new Error("O local informado não pertence à loja atual.")
+  }
+
+  return location
 }
 
 export async function listStockLocations(storeId: string) {
@@ -177,6 +288,7 @@ export async function listInventoryBalances(
   filters: InventoryListFilters
 ): Promise<ListInventoryBalancesResult> {
   const supabase = await createClient({ serviceRole: true })
+  const pageSize = filters.limit || INVENTORY_PAGE_SIZE
   let query = supabase
     .from("products")
     .select(
@@ -190,36 +302,38 @@ export async function listInventoryBalances(
     query = query.eq("category_id", filters.categoryId)
   }
 
+  if (filters.productId) {
+    query = query.eq("id", filters.productId)
+  }
+
+  if (filters.search) {
+    const sanitized = filters.search.replace(/[(),]/g, " ").trim()
+    query = query.or(`name.ilike.%${sanitized}%,internal_code.ilike.%${sanitized}%`)
+  }
+
   const { data, error } = await query
 
   if (error) {
     throw error
   }
 
-  const allRows = ((data ?? []) as InventoryProductRecord[]).map(mapInventoryBalanceRow)
-  const locationFilteredRows = filters.locationId
-    ? allRows.filter((row) =>
-        row.locationBalances.some(
-          (balance) => balance.locationId === filters.locationId
-        )
-      )
-    : allRows
-  const lowStockCount = locationFilteredRows.filter((row) => row.isBelowMin).length
-  const finalRows = filters.belowMin
-    ? locationFilteredRows.filter((row) => row.isBelowMin)
-    : locationFilteredRows
+  const allRows = ((data ?? []) as InventoryProductRecord[]).map((record) =>
+    mapInventoryBalanceRow(record, filters.locationId)
+  )
+  const lowStockCount = allRows.filter((row) => row.isBelowMin).length
+  const finalRows = filters.lowStock ? allRows.filter((row) => row.isBelowMin) : allRows
   const totalCount = finalRows.length
-  const totalPages = Math.max(1, Math.ceil(totalCount / INVENTORY_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const currentPage = Math.min(filters.page, totalPages)
-  const from = (currentPage - 1) * INVENTORY_PAGE_SIZE
-  const items = finalRows.slice(from, from + INVENTORY_PAGE_SIZE)
+  const from = (currentPage - 1) * pageSize
+  const items = finalRows.slice(from, from + pageSize)
 
   return {
     items,
     totalCount,
     totalPages,
     page: currentPage,
-    pageSize: INVENTORY_PAGE_SIZE,
+    pageSize,
     lowStockCount,
   }
 }
@@ -231,6 +345,7 @@ export async function listInventoryMovements(
   const supabase = await createClient({ serviceRole: true })
   const locations = await listStockLocations(storeId)
   const locationIds = locations.map((location) => location.id)
+  const pageSize = filters.limit || INVENTORY_MOVEMENTS_PAGE_SIZE
 
   if (locationIds.length === 0) {
     return {
@@ -238,18 +353,18 @@ export async function listInventoryMovements(
       totalCount: 0,
       totalPages: 1,
       page: 1,
-      pageSize: INVENTORY_MOVEMENTS_PAGE_SIZE,
+      pageSize,
     }
   }
 
   const buildQuery = (page: number) => {
-    const from = (page - 1) * INVENTORY_MOVEMENTS_PAGE_SIZE
-    const to = from + INVENTORY_MOVEMENTS_PAGE_SIZE - 1
+    const from = (page - 1) * pageSize
+    const to = from + pageSize - 1
 
     let query = supabase
       .from("stock_movements")
       .select(
-        "id, created_at, movement_type, quantity, unit_cost, reference_type, notes, location_id, stock_locations(id, name), products(id, name, internal_code), profiles(id, name)",
+        "id, product_id, created_at, movement_type, quantity, unit_cost, reference_type, notes, location_id, stock_locations(id, name), products(id, name, internal_code), profiles(id, name)",
         { count: "exact" }
       )
       .in("location_id", locationIds)
@@ -268,6 +383,14 @@ export async function listInventoryMovements(
       query = query.eq("movement_type", filters.movementType)
     }
 
+    if (filters.dateStart) {
+      query = query.gte("created_at", `${filters.dateStart}T00:00:00`)
+    }
+
+    if (filters.dateEnd) {
+      query = query.lte("created_at", `${filters.dateEnd}T23:59:59.999`)
+    }
+
     return query
   }
 
@@ -281,7 +404,7 @@ export async function listInventoryMovements(
   }
 
   const totalCount = totalCountResult ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalCount / INVENTORY_MOVEMENTS_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const currentPage = Math.min(filters.page, totalPages)
 
   if ((data?.length ?? 0) === 0 && totalCount > 0 && currentPage !== filters.page) {
@@ -300,7 +423,37 @@ export async function listInventoryMovements(
     totalCount,
     totalPages,
     page: currentPage,
-    pageSize: INVENTORY_MOVEMENTS_PAGE_SIZE,
+    pageSize,
+  }
+}
+
+export async function getInventoryProductOptionById(
+  storeId: string,
+  productId: string
+): Promise<InventoryProductOption | null> {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, internal_code, name")
+    .eq("store_id", storeId)
+    .eq("is_service", false)
+    .eq("id", productId)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  if (!data) {
+    return null
+  }
+
+  const record = data as InventoryProductOptionRecord
+
+  return {
+    id: record.id,
+    internalCode: record.internal_code,
+    name: record.name,
   }
 }
 
@@ -324,6 +477,49 @@ export async function getStockLocationById(locationId: string, storeId: string) 
   return mapStockLocation(data as StockLocationRecord)
 }
 
+export async function getStockBalanceByProductAndLocation(
+  storeId: string,
+  productId: string,
+  locationId: string
+): Promise<InventoryStockBalanceSnapshot | null> {
+  await Promise.all([
+    ensureProductCanManageStock(storeId, productId),
+    ensureLocationBelongsToStore(storeId, locationId),
+  ])
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("stock_balances")
+    .select("id, product_id, location_id, quantity, updated_at")
+    .eq("product_id", productId)
+    .eq("location_id", locationId)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  if (!data) {
+    return {
+      id: null,
+      productId,
+      locationId,
+      quantity: 0,
+      updatedAt: null,
+    }
+  }
+
+  const quantity = Number(data.quantity ?? 0)
+
+  return {
+    id: data.id,
+    productId: data.product_id,
+    locationId: data.location_id,
+    quantity: Number.isFinite(quantity) ? quantity : 0,
+    updatedAt: data.updated_at,
+  }
+}
+
 export async function createInventoryEntry(
   storeId: string,
   userId: string,
@@ -341,10 +537,10 @@ export async function createInventoryEntry(
   })
 
   if (error) {
-    throw error
+    throw normalizeInventoryError(error)
   }
 
-  return data
+  return String(data)
 }
 
 export async function createInventoryAdjustment(
@@ -363,10 +559,10 @@ export async function createInventoryAdjustment(
   })
 
   if (error) {
-    throw error
+    throw normalizeInventoryError(error)
   }
 
-  return data
+  return String(data)
 }
 
 export async function createInventoryTransfer(
@@ -386,10 +582,10 @@ export async function createInventoryTransfer(
   })
 
   if (error) {
-    throw error
+    throw normalizeInventoryError(error)
   }
 
-  return data
+  return String(data)
 }
 
 export async function createStockLocation(
@@ -402,11 +598,43 @@ export async function createStockLocation(
     p_name: input.name,
     p_description: input.description ?? null,
     p_is_default: input.is_default,
-    p_active: input.active,
+    p_active: input.is_default ? true : input.active,
   })
 
   if (error) {
-    throw error
+    throw normalizeInventoryError(error)
+  }
+
+  return getStockLocationById(String(data), storeId)
+}
+
+export async function updateStockLocation(
+  locationId: string,
+  storeId: string,
+  input: StockLocationMutationInput
+) {
+  const existing = await getStockLocationById(locationId, storeId)
+
+  if (!existing) {
+    return null
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase.rpc("inventory_update_location", {
+    p_location_id: locationId,
+    p_store_id: storeId,
+    p_name: input.name,
+    p_description: input.description ?? null,
+    p_is_default: input.is_default,
+    p_active: input.is_default ? true : input.active,
+  })
+
+  if (error) {
+    throw normalizeInventoryError(error)
+  }
+
+  if (!data) {
+    return null
   }
 
   return getStockLocationById(String(data), storeId)

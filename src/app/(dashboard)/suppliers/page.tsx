@@ -3,7 +3,11 @@ import { ChevronLeft, ChevronRight, Plus, Truck } from "lucide-react"
 import { notFound } from "next/navigation"
 
 import { getCurrentStoreContext } from "@/lib/products-server"
-import { getSupplierListFilters, type SupplierSummary } from "@/lib/suppliers"
+import {
+  SUPPLIERS_PAGE_SIZE,
+  getSupplierListFilters,
+  type SupplierSummary,
+} from "@/lib/suppliers"
 import { listSuppliers } from "@/lib/suppliers-server"
 import { SuppliersFilters } from "@/components/suppliers/suppliers-filters"
 import { ActiveStatusBadge } from "@/components/shared/active-status-badge"
@@ -30,6 +34,10 @@ function buildPageHref(
 
   if (filters.active !== null) {
     params.set("active", String(filters.active))
+  }
+
+  if (filters.limit !== SUPPLIERS_PAGE_SIZE) {
+    params.set("limit", String(filters.limit))
   }
 
   if (page > 1) {

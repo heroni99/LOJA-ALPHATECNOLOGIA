@@ -33,8 +33,10 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
             <strong>${escapeHtml(item.name)}</strong>
             <div class="meta">${escapeHtml(item.internalCode)}${item.imeiOrSerial ? ` • ${escapeHtml(item.imeiOrSerial)}` : ""}</div>
           </td>
-          <td class="item-qty">${escapeHtml(formatPdvReceiptItemQuantity(item.quantity))}</td>
-          <td class="item-total">${escapeHtml(formatCentsToBRL(item.totalPriceCents))}</td>
+          <td class="item-total">
+            ${escapeHtml(`${formatPdvReceiptItemQuantity(item.quantity)} x ${formatCentsToBRL(item.unitPriceCents)}`)}
+            <div class="item-strong">${escapeHtml(formatCentsToBRL(item.totalPriceCents))}</div>
+          </td>
         </tr>
       `
     )
@@ -60,17 +62,17 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
     <style>
       :root {
         color-scheme: light;
-        font-family: Inter, Arial, sans-serif;
+        font-family: "Courier New", monospace;
       }
       body {
         margin: 0;
         background: #fff;
-        color: #111827;
+        color: #111;
       }
       .receipt {
         width: 80mm;
         margin: 0 auto;
-        padding: 12px 10px 24px;
+        padding: 14px 10px 24px;
       }
       h1, h2, p {
         margin: 0;
@@ -79,15 +81,15 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
         text-align: center;
       }
       .store {
-        font-size: 16px;
+        font-size: 18px;
         font-weight: 700;
+        letter-spacing: 0.04em;
       }
       .muted {
-        color: #6b7280;
         font-size: 11px;
       }
       .separator {
-        border-top: 1px dashed #d1d5db;
+        border-top: 1px dashed #888;
         margin: 12px 0;
       }
       .block {
@@ -101,34 +103,31 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
         font-size: 12px;
       }
       th, td {
-        padding: 4px 0;
+        padding: 3px 0;
         vertical-align: top;
       }
       th {
         text-align: left;
-        font-size: 11px;
-        color: #6b7280;
+        font-size: 10px;
         font-weight: 600;
       }
       .item-name {
-        width: 60%;
-      }
-      .item-qty {
-        width: 15%;
-        text-align: center;
+        width: 64%;
       }
       .item-total {
-        width: 25%;
+        width: 36%;
         text-align: right;
         white-space: nowrap;
       }
+      .item-strong {
+        font-weight: 700;
+      }
       .meta {
-        color: #6b7280;
         font-size: 10px;
       }
       .totals {
         display: grid;
-        gap: 6px;
+        gap: 4px;
         font-size: 12px;
       }
       .total-line {
@@ -137,8 +136,12 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
         gap: 12px;
       }
       .total-line.strong {
-        font-size: 14px;
+        font-size: 16px;
         font-weight: 700;
+      }
+      .footer-note {
+        display: grid;
+        gap: 4px;
       }
       @media print {
         body {
@@ -150,29 +153,21 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
   <body onload="window.print()">
     <main class="receipt">
       <section class="center">
-        <h1 class="store">${escapeHtml(data.storeName)}</h1>
-        <p class="muted">Comprovante de venda</p>
+        <h1 class="store">${escapeHtml(data.storeName || "ALPHA TECNOLOGIA")}</h1>
       </section>
 
       <div class="separator"></div>
 
       <section class="block">
-        <p><strong>Venda:</strong> ${escapeHtml(data.sale.saleNumber)}</p>
+        <p><strong>Venda nº</strong> ${escapeHtml(data.sale.saleNumber)}</p>
         <p><strong>Data:</strong> ${escapeHtml(formatDateTime(data.sale.completedAt ?? new Date().toISOString()))}</p>
-        <p><strong>Operador:</strong> ${escapeHtml(data.operatorName ?? "Operador")}</p>
+        <p><strong>Operador:</strong> ${escapeHtml(data.operatorName ?? "Sistema")}</p>
         <p><strong>Cliente:</strong> ${escapeHtml(data.customer?.name ?? "Consumidor final")}</p>
       </section>
 
       <div class="separator"></div>
 
       <table>
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th class="item-qty">Qtd.</th>
-            <th class="item-total">Total</th>
-          </tr>
-        </thead>
         <tbody>
           ${itemsHtml}
         </tbody>
@@ -185,12 +180,18 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
           <span>Subtotal</span>
           <strong>${escapeHtml(formatCentsToBRL(data.sale.subtotalCents))}</strong>
         </div>
+        ${
+          data.sale.discountAmountCents > 0
+            ? `
         <div class="total-line">
           <span>Desconto</span>
           <strong>${escapeHtml(formatCentsToBRL(data.sale.discountAmountCents))}</strong>
         </div>
+        `
+            : ""
+        }
         <div class="total-line strong">
-          <span>Total</span>
+          <span>TOTAL</span>
           <strong>${escapeHtml(formatCentsToBRL(data.sale.totalCents))}</strong>
         </div>
       </section>
@@ -198,12 +199,6 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
       <div class="separator"></div>
 
       <table>
-        <thead>
-          <tr>
-            <th>Pagamento</th>
-            <th class="item-total">Valor</th>
-          </tr>
-        </thead>
         <tbody>
           ${paymentsHtml}
         </tbody>
@@ -211,9 +206,9 @@ function renderReceiptHtml(data: NonNullable<Awaited<ReturnType<typeof getSaleRe
 
       <div class="separator"></div>
 
-      <section class="center muted">
-        <p>ALPHA TECNOLOGIA</p>
-        <p>Comprovante gerado pelo sistema</p>
+      <section class="center muted footer-note">
+        <p>Documento sem valor fiscal</p>
+        <p>Obrigado pela preferência!</p>
       </section>
     </main>
   </body>

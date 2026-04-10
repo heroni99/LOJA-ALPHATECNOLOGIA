@@ -3,6 +3,7 @@ import "server-only"
 import { createClient } from "@/lib/supabase/server"
 import {
   PDV_SEARCH_RESULT_LIMIT,
+  type PdvCategorySummary,
   type PdvCheckoutInput,
   type PdvCompletedSale,
   type PdvCompletedSaleItem,
@@ -18,14 +19,22 @@ type StockLocationRecord = {
   name: string
 }
 
+type CategoryRelationRecord = {
+  id: string
+  name: string
+}
+
 type ProductRecord = {
   id: string
   name: string
   internal_code: string
+  supplier_code: string | null
   sale_price: number | string | null
   has_serial_control: boolean
   active: boolean
   is_service: boolean
+  image_url: string | null
+  categories?: CategoryRelationRecord | CategoryRelationRecord[] | null
 }
 
 type ProductCodeRecord = {
@@ -33,7 +42,6 @@ type ProductCodeRecord = {
   product_unit_id: string | null
   code: string
   scope: string
-  code_type: string
 }
 
 type StockBalanceRecord = {
@@ -49,7 +57,6 @@ type ProductUnitRecord = {
   serial_number: string | null
   current_location_id: string | null
   unit_status: string
-  purchase_price: number | string | null
 }
 
 type SaleRecord = {
@@ -71,6 +78,7 @@ type SaleItemRecord = {
   product_unit_id: string | null
   quantity: number | string | null
   unit_price: number | string | null
+  discount_amount: number | string | null
   total_price: number | string | null
 }
 
@@ -108,6 +116,13 @@ type SalesCheckoutRpcResponse = {
   change_amount: number
 }
 
+type DatabaseErrorLike = {
+  code?: string
+  message?: string
+  details?: string | null
+  hint?: string | null
+}
+
 function dedupeStrings(values: Array<string | null | undefined>) {
   return Array.from(
     new Set(values.filter((value): value is string => Boolean(value)))
@@ -118,6 +133,133 @@ function parseQuantity(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0)
 
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function getSingleRelation<T>(value: T | T[] | null | undefined) {
+  if (Array.isArray(value)) {
+    return value[0] ?? null
+  }
+
+  return value ?? null
+}
+
+function isDatabaseErrorLike(error: unknown): error is DatabaseErrorLike {
+  return typeof error === "object" && error !== null
+}
+
+function normalizePdvError(error: unknown) {
+  if (!isDatabaseErrorLike(error)) {
+    return error
+  }
+
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ")
+
+  if (
+    error.code === "PGRST202" ||
+    /Could not find the function public\.sales_checkout/i.test(message)
+  ) {
+    return new Error(
+      "As funções do PDV não estão instaladas no banco. Execute `supabase/pdv.sql` no Supabase antes de usar este módulo."
+    )
+  }
+
+  return new Error(error.message ?? "Não foi possível processar a operação do PDV.")
+}
+
+function getProductCategory(product: ProductRecord): PdvCategorySummary | null {
+  const category = getSingleRelation(product.categories)
+
+  if (!category) {
+    return null
+  }
+
+  return {
+    id: category.id,
+    name: category.name,
+  }
+}
+
+function getResultSearchScore(result: PdvSearchResult, query: string) {
+  const normalizedQuery = query.trim().toLowerCase()
+  const candidates = [
+    result.internalCode,
+    result.name,
+    result.imeiOrSerial ?? "",
+    result.category?.name ?? "",
+  ].map((candidate) => candidate.toLowerCase())
+
+  if (candidates.some((candidate) => candidate === normalizedQuery)) {
+    return 0
+  }
+
+  if (candidates.some((candidate) => candidate.startsWith(normalizedQuery))) {
+    return 1
+  }
+
+  return 2
+}
+
+function mapProductSearchResult(
+  product: ProductRecord,
+  availableQuantity: number
+): PdvSearchResult {
+  return {
+    key: `product:${product.id}`,
+    kind: "product",
+    productId: product.id,
+    productUnitId: null,
+    internalCode: product.internal_code,
+    name: product.name,
+    salePriceCents: parseDbMoneyToCents(product.sale_price),
+    hasSerialControl: false,
+    availableQuantity,
+    imageUrl: product.image_url,
+    category: getProductCategory(product),
+    imeiOrSerial: null,
+  }
+}
+
+function mapSerializedUnitSearchResult(
+  product: ProductRecord,
+  unit: ProductUnitRecord
+): PdvSearchResult {
+  return {
+    key: `unit:${unit.id}`,
+    kind: "unit",
+    productId: product.id,
+    productUnitId: unit.id,
+    internalCode: product.internal_code,
+    name: product.name,
+    salePriceCents: parseDbMoneyToCents(product.sale_price),
+    hasSerialControl: true,
+    availableQuantity: 1,
+    imageUrl: product.image_url,
+    category: getProductCategory(product),
+    imeiOrSerial: unit.imei ?? unit.serial_number ?? unit.imei2 ?? null,
+  }
+}
+
+function mapSaleItemSummary(
+  item: SaleItemRecord,
+  productMap: Map<string, ProductRecord>,
+  unitMap: Map<string, ProductUnitRecord>
+): PdvCompletedSaleItem {
+  const product = productMap.get(item.product_id)
+  const unit = item.product_unit_id ? unitMap.get(item.product_unit_id) : null
+  const imeiOrSerial = unit?.imei ?? unit?.serial_number ?? unit?.imei2 ?? null
+
+  return {
+    id: item.id,
+    productId: item.product_id,
+    productUnitId: item.product_unit_id,
+    name: product?.name ?? "Produto",
+    internalCode: product?.internal_code ?? "N/A",
+    imeiOrSerial,
+    quantity: parseQuantity(item.quantity),
+    unitPriceCents: parseDbMoneyToCents(item.unit_price),
+    discountAmountCents: parseDbMoneyToCents(item.discount_amount),
+    totalPriceCents: parseDbMoneyToCents(item.total_price),
+  }
 }
 
 async function getDefaultStockLocation(storeId: string) {
@@ -139,13 +281,15 @@ async function getDefaultStockLocation(storeId: string) {
 
 async function getProductsByIds(storeId: string, productIds: string[]) {
   if (productIds.length === 0) {
-    return []
+    return [] as ProductRecord[]
   }
 
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
     .from("products")
-    .select("id, name, internal_code, sale_price, has_serial_control, active, is_service")
+    .select(
+      "id, name, internal_code, supplier_code, sale_price, has_serial_control, active, is_service, image_url, categories(id, name)"
+    )
     .eq("store_id", storeId)
     .eq("active", true)
     .eq("is_service", false)
@@ -156,47 +300,6 @@ async function getProductsByIds(storeId: string, productIds: string[]) {
   }
 
   return (data ?? []) as ProductRecord[]
-}
-
-function getResultSearchScore(result: PdvSearchResult, query: string) {
-  const normalizedQuery = query.trim().toLowerCase()
-  const candidates = [
-    result.internalCode,
-    result.name,
-    result.imeiOrSerial ?? "",
-  ].map((candidate) => candidate.toLowerCase())
-
-  if (candidates.some((candidate) => candidate === normalizedQuery)) {
-    return 0
-  }
-
-  if (candidates.some((candidate) => candidate.startsWith(normalizedQuery))) {
-    return 1
-  }
-
-  return 2
-}
-
-function mapSaleItemSummary(
-  item: SaleItemRecord,
-  productMap: Map<string, ProductRecord>,
-  unitMap: Map<string, ProductUnitRecord>
-): PdvCompletedSaleItem {
-  const product = productMap.get(item.product_id)
-  const unit = item.product_unit_id ? unitMap.get(item.product_unit_id) : null
-  const imeiOrSerial = unit?.imei ?? unit?.serial_number ?? unit?.imei2 ?? null
-
-  return {
-    id: item.id,
-    productId: item.product_id,
-    productUnitId: item.product_unit_id,
-    name: product?.name ?? "Produto",
-    internalCode: product?.internal_code ?? "N/A",
-    imeiOrSerial,
-    quantity: parseQuantity(item.quantity),
-    unitPriceCents: parseDbMoneyToCents(item.unit_price),
-    totalPriceCents: parseDbMoneyToCents(item.total_price),
-  }
 }
 
 async function getSaleById(saleId: string, storeId: string) {
@@ -221,7 +324,9 @@ async function getSaleItems(saleId: string) {
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
     .from("sale_items")
-    .select("id, product_id, product_unit_id, quantity, unit_price, total_price")
+    .select(
+      "id, product_id, product_unit_id, quantity, unit_price, discount_amount, total_price"
+    )
     .eq("sale_id", saleId)
     .order("created_at", { ascending: true })
 
@@ -322,28 +427,30 @@ export async function searchPdvCatalog(storeId: string, rawQuery: string) {
   const [productQueryResult, codeQueryResult, unitQueryResult] = await Promise.all([
     supabase
       .from("products")
-      .select("id, name, internal_code, sale_price, has_serial_control, active, is_service")
+      .select(
+        "id, name, internal_code, supplier_code, sale_price, has_serial_control, active, is_service, image_url, categories(id, name)"
+      )
       .eq("store_id", storeId)
       .eq("active", true)
       .eq("is_service", false)
-      .or(`name.ilike.%${sanitized}%,internal_code.ilike.%${sanitized}%`)
-      .limit(20),
+      .or(
+        `name.ilike.%${sanitized}%,internal_code.ilike.%${sanitized}%,supplier_code.ilike.%${sanitized}%`
+      )
+      .limit(24),
     supabase
       .from("product_codes")
-      .select("product_id, product_unit_id, code, scope, code_type")
+      .select("product_id, product_unit_id, code, scope")
       .ilike("code", `%${sanitized}%`)
-      .limit(20),
+      .limit(24),
     supabase
       .from("product_units")
-      .select(
-        "id, product_id, imei, imei2, serial_number, current_location_id, unit_status, purchase_price"
-      )
+      .select("id, product_id, imei, imei2, serial_number, current_location_id, unit_status")
       .eq("current_location_id", defaultLocation.id)
       .eq("unit_status", "IN_STOCK")
       .or(
         `imei.ilike.%${sanitized}%,imei2.ilike.%${sanitized}%,serial_number.ilike.%${sanitized}%`
       )
-      .limit(20),
+      .limit(24),
   ])
 
   if (productQueryResult.error) {
@@ -358,14 +465,25 @@ export async function searchPdvCatalog(storeId: string, rawQuery: string) {
     throw unitQueryResult.error
   }
 
+  const directRows = (productQueryResult.data ?? []) as ProductRecord[]
   const codeRows = (codeQueryResult.data ?? []) as ProductCodeRecord[]
   const exactUnitRows = (unitQueryResult.data ?? []) as ProductUnitRecord[]
   const matchingProductIds = dedupeStrings([
-    ...((productQueryResult.data ?? []) as ProductRecord[]).map((product) => product.id),
+    ...directRows.map((product) => product.id),
     ...codeRows.map((code) => code.product_id),
     ...exactUnitRows.map((unit) => unit.product_id),
   ])
-  const matchingProducts = await getProductsByIds(storeId, matchingProductIds)
+  const missingProductIds = matchingProductIds.filter(
+    (productId) => !directRows.some((product) => product.id === productId)
+  )
+  const extraRows =
+    missingProductIds.length > 0
+      ? await getProductsByIds(storeId, missingProductIds)
+      : ([] as ProductRecord[])
+  const matchingProducts = [...directRows, ...extraRows].filter(
+    (product, index, products) =>
+      products.findIndex((entry) => entry.id === product.id) === index
+  )
   const productMap = new Map(matchingProducts.map((product) => [product.id, product]))
   const codedUnitIds = dedupeStrings(
     codeRows
@@ -391,9 +509,7 @@ export async function searchPdvCatalog(storeId: string, rawQuery: string) {
       serializedProductIds.length > 0
         ? supabase
             .from("product_units")
-            .select(
-              "id, product_id, imei, imei2, serial_number, current_location_id, unit_status, purchase_price"
-            )
+            .select("id, product_id, imei, imei2, serial_number, current_location_id, unit_status")
             .eq("current_location_id", defaultLocation.id)
             .eq("unit_status", "IN_STOCK")
             .in("product_id", serializedProductIds)
@@ -402,9 +518,7 @@ export async function searchPdvCatalog(storeId: string, rawQuery: string) {
       codedUnitIds.length > 0
         ? supabase
             .from("product_units")
-            .select(
-              "id, product_id, imei, imei2, serial_number, current_location_id, unit_status, purchase_price"
-            )
+            .select("id, product_id, imei, imei2, serial_number, current_location_id, unit_status")
             .eq("current_location_id", defaultLocation.id)
             .eq("unit_status", "IN_STOCK")
             .in("id", codedUnitIds)
@@ -430,7 +544,7 @@ export async function searchPdvCatalog(storeId: string, rawQuery: string) {
     ])
   )
   const serializedUnits = [
-    ...(exactUnitRows ?? []),
+    ...exactUnitRows,
     ...((serializedUnitsByProductResult.data ?? []) as ProductUnitRecord[]),
     ...((codedUnitResult.data ?? []) as ProductUnitRecord[]),
   ]
@@ -438,44 +552,18 @@ export async function searchPdvCatalog(storeId: string, rawQuery: string) {
 
   const productResults = matchingProducts
     .filter((product) => !product.has_serial_control)
-    .map((product) => ({
-      key: `product:${product.id}`,
-      kind: "product" as const,
-      productId: product.id,
-      productUnitId: null,
-      internalCode: product.internal_code,
-      name: product.name,
-      salePriceCents: parseDbMoneyToCents(product.sale_price),
-      hasSerialControl: false,
-      availableQuantity: stockBalanceMap.get(product.id) ?? 0,
-      imeiOrSerial: null,
-    }))
+    .map((product) => mapProductSearchResult(product, stockBalanceMap.get(product.id) ?? 0))
     .filter((product) => product.availableQuantity > 0)
 
-  const unitResults: PdvSearchResult[] = Array.from(serializedUnitMap.values()).flatMap(
-    (unit) => {
-      const product = productMap.get(unit.product_id)
+  const unitResults = Array.from(serializedUnitMap.values()).flatMap((unit) => {
+    const product = productMap.get(unit.product_id)
 
-      if (!product || !product.has_serial_control) {
-        return []
-      }
-
-      return [
-        {
-          key: `unit:${unit.id}`,
-          kind: "unit" as const,
-          productId: product.id,
-          productUnitId: unit.id,
-          internalCode: product.internal_code,
-          name: product.name,
-          salePriceCents: parseDbMoneyToCents(product.sale_price),
-          hasSerialControl: true,
-          availableQuantity: 1,
-          imeiOrSerial: unit.imei ?? unit.serial_number ?? unit.imei2 ?? null,
-        },
-      ]
+    if (!product || !product.has_serial_control) {
+      return []
     }
-  )
+
+    return [mapSerializedUnitSearchResult(product, unit)]
+  })
 
   return [...unitResults, ...productResults]
     .sort((left, right) => {
@@ -504,16 +592,15 @@ export async function checkoutPdvSale(
   const { data, error } = await supabase.rpc("sales_checkout", {
     p_store_id: storeId,
     p_user_id: userId,
-    p_cash_session_id: payload.cash_session_id,
     p_customer_id: payload.customer_id ?? null,
-    p_discount_mode: payload.discount?.mode ?? null,
-    p_discount_value: payload.discount?.value ?? 0,
+    p_discount_amount: payload.discount_amount ?? 0,
+    p_notes: payload.notes ?? null,
     p_items: payload.items,
     p_payments: payload.payments,
   })
 
   if (error) {
-    throw error
+    throw normalizePdvError(error)
   }
 
   const response = data as SalesCheckoutRpcResponse | null
@@ -559,9 +646,7 @@ export async function getSaleCheckoutSummary(
       ? createClient({ serviceRole: true }).then(async (supabase) => {
           const { data, error } = await supabase
             .from("product_units")
-            .select(
-              "id, product_id, imei, imei2, serial_number, current_location_id, unit_status, purchase_price"
-            )
+            .select("id, product_id, imei, imei2, serial_number, current_location_id, unit_status")
             .in("id", unitIds)
 
           if (error) {
@@ -619,7 +704,7 @@ export async function getSaleReceiptData(
 
   return {
     sale,
-    storeName: store?.display_name ?? store?.name ?? "ALPHA TECNOLOGIA",
+    storeName: (store?.display_name ?? store?.name ?? "ALPHA TECNOLOGIA").toUpperCase(),
     operatorName: operator?.name ?? null,
     customer,
   }

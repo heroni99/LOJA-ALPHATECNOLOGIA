@@ -9,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
 type DataTableColumn<TData> = {
@@ -25,7 +26,10 @@ type DataTableProps<TData> = {
   getRowKey: (row: TData) => string
   getRowHref?: (row: TData) => string | null
   getRowClassName?: (row: TData) => string | null | undefined
-  emptyState: ReactNode
+  loading?: boolean
+  emptyMessage?: ReactNode
+  emptyState?: ReactNode
+  loadingRowCount?: number
   className?: string
 }
 
@@ -35,11 +39,14 @@ export function DataTable<TData>({
   getRowKey,
   getRowHref,
   getRowClassName,
+  loading = false,
+  emptyMessage,
   emptyState,
+  loadingRowCount = 10,
   className,
 }: DataTableProps<TData>) {
   return (
-    <Table className={className}>
+    <Table className={cn("min-w-max", className)}>
       <TableHeader>
         <TableRow>
           {columns.map((column) => (
@@ -50,7 +57,17 @@ export function DataTable<TData>({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {data.length > 0 ? (
+        {loading ? (
+          Array.from({ length: loadingRowCount }).map((_, rowIndex) => (
+            <TableRow key={`loading-row-${rowIndex}`}>
+              {columns.map((column) => (
+                <TableCell key={`${column.key}-${rowIndex}`}>
+                  <Skeleton className="h-5 w-full max-w-[180px]" />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))
+        ) : data.length > 0 ? (
           data.map((row) => {
             const href = getRowHref?.(row) ?? null
 
@@ -86,7 +103,11 @@ export function DataTable<TData>({
         ) : (
           <TableRow>
             <TableCell colSpan={columns.length} className="p-0">
-              {emptyState}
+              {emptyState ?? (
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  {emptyMessage ?? "Nenhum registro encontrado."}
+                </div>
+              )}
             </TableCell>
           </TableRow>
         )}

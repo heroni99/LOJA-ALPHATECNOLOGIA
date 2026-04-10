@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { ZodError } from "zod"
 
 import {
+  getProductApiErrorMessage,
+  toProductDetailDto,
+  toProductSummaryDto,
+} from "@/lib/products-api"
+import {
   createProduct,
   getCurrentStoreContext,
   listProducts,
@@ -10,18 +15,6 @@ import {
   getProductListFilters,
   productMutationSchema,
 } from "@/lib/products"
-
-function getValidationMessage(error: unknown) {
-  if (error instanceof ZodError) {
-    return error.issues[0]?.message ?? "Dados inválidos."
-  }
-
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível processar a requisição."
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -37,18 +30,14 @@ export async function GET(request: NextRequest) {
     const result = await listProducts(storeContext.storeId, filters)
 
     return NextResponse.json({
-      data: result.items,
-      meta: {
-        page: result.page,
-        pageSize: result.pageSize,
-        totalCount: result.totalCount,
-        totalPages: result.totalPages,
-        filters,
-      },
+      data: result.items.map(toProductSummaryDto),
+      total: result.totalCount,
+      page: result.page,
+      limit: result.pageSize,
     })
   } catch (error) {
     return NextResponse.json(
-      { error: getValidationMessage(error) },
+      { error: getProductApiErrorMessage(error) },
       { status: 500 }
     )
   }
@@ -64,12 +53,25 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const payload = productMutationSchema.parse(body)
-    const product = await createProduct(storeContext.storeId, payload)
+    const created = await createProduct(storeContext.storeId, payload)
 
-    return NextResponse.json({ data: product }, { status: 201 })
+    if (!created) {
+      throw new Error("Não foi possível carregar o produto criado.")
+    }
+
+    return NextResponse.json(
+      {
+        data: toProductDetailDto(created.product, {
+          codes: created.codes,
+          stockBalances: created.stockBalances,
+          recentMovements: created.recentMovements,
+        }),
+      },
+      { status: 201 }
+    )
   } catch (error) {
     return NextResponse.json(
-      { error: getValidationMessage(error) },
+      { error: getProductApiErrorMessage(error) },
       { status: error instanceof ZodError ? 400 : 500 }
     )
   }

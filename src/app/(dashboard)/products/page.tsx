@@ -1,26 +1,36 @@
+import { Suspense } from "react"
+import Image from "next/image"
 import Link from "next/link"
-import { ChevronLeft, ChevronRight, Package, Plus } from "lucide-react"
+import {
+  ChevronLeft,
+  ChevronRight,
+  ImageIcon,
+  Package,
+  Plus,
+  Search,
+} from "lucide-react"
 import { notFound } from "next/navigation"
 
+import { ProductsFilters } from "@/components/products/products-filters"
+import { ProductStatusBadge } from "@/components/products/product-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { SectionCard } from "@/components/shared/section-card"
-import { ProductStatusBadge } from "@/components/products/product-status-badge"
-import { ProductsFilters } from "@/components/products/products-filters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  getCurrentStoreContext,
-  listProductCategories,
-  listProducts,
-} from "@/lib/products-server"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   formatCentsToBRL,
   formatQuantity,
   getProductListFilters,
   type ProductSummary,
 } from "@/lib/products"
+import {
+  getCurrentStoreContext,
+  listProductCategories,
+  listProducts,
+} from "@/lib/products-server"
 
 type ProductsPageProps = {
   searchParams?: Record<string, string | string[] | undefined>
@@ -44,6 +54,10 @@ function buildPageHref(
     params.set("active", String(filters.active))
   }
 
+  if (filters.isService !== null) {
+    params.set("is_service", String(filters.isService))
+  }
+
   if (page > 1) {
     params.set("page", String(page))
   }
@@ -55,20 +69,43 @@ function buildPageHref(
 
 const productColumns: DataTableColumn<ProductSummary>[] = [
   {
+    key: "image",
+    header: "Imagem",
+    cell: (product) =>
+      product.imageUrl ? (
+        <div className="overflow-hidden rounded-xl border border-border/70">
+          <Image
+            src={product.imageUrl}
+            alt={product.name}
+            width={32}
+            height={32}
+            className="size-8 object-cover"
+          />
+        </div>
+      ) : (
+        <div className="flex size-8 items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/30 text-muted-foreground">
+          <ImageIcon className="size-4" />
+        </div>
+      ),
+    className: "w-14",
+  },
+  {
     key: "internal_code",
     header: "Código interno",
     cell: (product) => (
-      <span className="font-medium text-foreground">{product.internalCode}</span>
+      <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
+        {product.internalCode}
+      </Badge>
     ),
   },
   {
     key: "name",
     header: "Nome",
     cell: (product) => (
-      <div className="flex flex-col">
+      <div className="flex flex-col gap-1">
         <span className="font-medium text-foreground">{product.name}</span>
         <span className="text-xs text-muted-foreground">
-          {product.categoryName ?? "Sem categoria"}
+          {product.supplierName ?? "Sem fornecedor"}
         </span>
       </div>
     ),
@@ -87,9 +124,23 @@ const productColumns: DataTableColumn<ProductSummary>[] = [
     headClassName: "text-right",
   },
   {
-    key: "total_stock",
+    key: "stock_total",
     header: "Estoque total",
-    cell: (product) => formatQuantity(product.totalStock),
+    cell: (product) => {
+      if (product.isService) {
+        return <span className="text-muted-foreground">N/A</span>
+      }
+
+      return (
+        <span
+          className={
+            product.isBelowMin ? "font-semibold text-red-700" : "font-semibold text-emerald-700"
+          }
+        >
+          {formatQuantity(product.stockTotal)}
+        </span>
+      )
+    },
     className: "text-right",
     headClassName: "text-right",
   },
@@ -100,7 +151,66 @@ const productColumns: DataTableColumn<ProductSummary>[] = [
   },
 ]
 
-export default async function ProductsPage({ searchParams = {} }: ProductsPageProps) {
+function ProductsPageSkeleton() {
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="space-y-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-3">
+            <Skeleton className="h-8 w-56" />
+            <Skeleton className="h-5 w-96 max-w-full" />
+          </div>
+          <Skeleton className="h-10 w-36" />
+        </div>
+      </div>
+
+      <SectionCard title="Filtros" description="Carregando filtros de produtos.">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_220px_180px_180px_auto]">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-40" />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Catálogo" description="Carregando listagem de produtos.">
+        <div className="rounded-3xl border border-border/70">
+          <div className="grid grid-cols-[72px_160px_minmax(220px,1fr)_180px_140px_140px_120px] gap-4 border-b border-border/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <span>Imagem</span>
+            <span>Código</span>
+            <span>Nome</span>
+            <span>Categoria</span>
+            <span className="text-right">Preço</span>
+            <span className="text-right">Estoque</span>
+            <span>Status</span>
+          </div>
+          <div className="grid gap-0">
+            {Array.from({ length: 10 }).map((_, index) => (
+              <div
+                key={`product-skeleton-${index}`}
+                className="grid grid-cols-[72px_160px_minmax(220px,1fr)_180px_140px_140px_120px] gap-4 border-b border-border/50 px-4 py-3 last:border-b-0"
+              >
+                <Skeleton className="h-8 w-8" />
+                <Skeleton className="h-6 w-28" />
+                <div className="grid gap-2">
+                  <Skeleton className="h-5 w-56" />
+                  <Skeleton className="h-4 w-32" />
+                </div>
+                <Skeleton className="h-5 w-28" />
+                <Skeleton className="ml-auto h-5 w-24" />
+                <Skeleton className="ml-auto h-5 w-16" />
+                <Skeleton className="h-6 w-20" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </SectionCard>
+    </div>
+  )
+}
+
+async function ProductsPageContent({ searchParams = {} }: ProductsPageProps) {
   const storeContext = await getCurrentStoreContext()
 
   if (!storeContext) {
@@ -119,10 +229,11 @@ export default async function ProductsPage({ searchParams = {} }: ProductsPagePr
         title="Produtos"
         titleSlot={
           <Badge variant="outline" className="border-primary/20 text-primary">
-            {products.totalCount} {products.totalCount === 1 ? "item" : "itens"}
+            {products.totalCount}{" "}
+            {products.totalCount === 1 ? "produto" : "produtos"}
           </Badge>
         }
-        description="Gerencie o catálogo com filtros, status de ativação, estoque consolidado e navegação rápida para detalhe e edição."
+        subtitle="Gerencie o catálogo com filtros rápidos, estoque consolidado e navegação direta para o detalhe do item."
         actions={
           <Button asChild>
             <Link href="/products/new">
@@ -135,19 +246,20 @@ export default async function ProductsPage({ searchParams = {} }: ProductsPagePr
 
       <SectionCard
         title="Filtros"
-        description="Pesquise por nome, código, marca, modelo, categoria e status do cadastro."
+        description="Busque por nome ou código e refine por categoria, status e tipo."
       >
         <ProductsFilters
           categories={categories}
           currentSearch={filters.search}
           currentCategoryId={filters.categoryId}
           currentActive={filters.active}
+          currentIsService={filters.isService}
         />
       </SectionCard>
 
       <SectionCard
         title="Catálogo"
-        description="Clique em um item para abrir o detalhe completo do produto."
+        description="Clique em uma linha para abrir o detalhe completo do produto."
       >
         <DataTable
           columns={productColumns}
@@ -165,9 +277,10 @@ export default async function ProductsPage({ searchParams = {} }: ProductsPagePr
         />
 
         <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Search className="size-4" />
             Página {products.page} de {products.totalPages}
-          </p>
+          </div>
           <div className="flex gap-2">
             {products.page > 1 ? (
               <Button variant="outline" asChild>
@@ -199,5 +312,13 @@ export default async function ProductsPage({ searchParams = {} }: ProductsPagePr
         </div>
       </SectionCard>
     </div>
+  )
+}
+
+export default function ProductsPage(props: ProductsPageProps) {
+  return (
+    <Suspense fallback={<ProductsPageSkeleton />}>
+      <ProductsPageContent {...props} />
+    </Suspense>
   )
 }

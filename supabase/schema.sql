@@ -332,6 +332,9 @@ create table if not exists public.stock_locations (
   constraint stock_locations_store_id_name_key unique (store_id, name)
 );
 
+-- Inventory RPCs that mutate stock live in `supabase/inventory.sql` and
+-- must be executed after this base schema in every environment.
+
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   store_id uuid not null references public.stores(id) on delete restrict,
@@ -430,7 +433,7 @@ create table if not exists public.cash_terminals (
 create table if not exists public.cash_sessions (
   id uuid primary key default gen_random_uuid(),
   cash_terminal_id uuid not null references public.cash_terminals(id) on delete restrict,
-  opened_by uuid not null references public.profiles(id) on delete restrict,
+  opened_by uuid references public.profiles(id) on delete set null,
   closed_by uuid references public.profiles(id) on delete set null,
   status public.cash_session_status_enum not null default 'OPEN',
   opening_amount numeric(14,2) not null default 0,
@@ -441,7 +444,6 @@ create table if not exists public.cash_sessions (
   closed_at timestamptz,
   notes text,
   constraint cash_sessions_opening_amount_check check (opening_amount >= 0),
-  constraint cash_sessions_expected_amount_check check (expected_amount >= 0),
   constraint cash_sessions_closing_amount_check check (closing_amount is null or closing_amount >= 0)
 );
 
@@ -454,10 +456,19 @@ create table if not exists public.cash_movements (
   reference_type public.reference_type_enum,
   reference_id uuid,
   description text,
-  user_id uuid not null references public.profiles(id) on delete restrict,
+  user_id uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
-  constraint cash_movements_amount_check check (amount > 0)
+  constraint cash_movements_amount_check check (
+    amount >= 0
+    and (
+      amount > 0
+      or movement_type in ('OPENING', 'CLOSING')
+    )
+  )
 );
+
+-- Cash session orchestration functions live in `supabase/cash.sql` and
+-- must be executed after this base schema in every environment.
 
 create table if not exists public.sales (
   id uuid primary key default gen_random_uuid(),
@@ -730,7 +741,42 @@ create index if not exists idx_product_codes_product_id on public.product_codes(
 create index if not exists idx_product_codes_product_unit_id on public.product_codes(product_unit_id);
 create index if not exists idx_product_codes_scope on public.product_codes(scope);
 
+update public.stock_locations
+set active = true
+where is_default = true
+  and active = false;
+
+with ranked_defaults as (
+  select
+    id,
+    row_number() over (
+      partition by store_id
+      order by created_at asc, id asc
+    ) as row_number
+  from public.stock_locations
+  where is_default = true
+)
+update public.stock_locations
+set is_default = false
+where id in (
+  select id
+  from ranked_defaults
+  where row_number > 1
+);
+
+do $$
+begin
+  alter table public.stock_locations
+    add constraint stock_locations_default_must_be_active_check
+    check (not is_default or active);
+exception
+  when duplicate_object then null;
+end $$;
+
 create index if not exists idx_stock_locations_store_active on public.stock_locations(store_id, active);
+create unique index if not exists idx_stock_locations_single_default_per_store
+  on public.stock_locations(store_id)
+  where is_default = true;
 create index if not exists idx_stock_balances_location_id on public.stock_balances(location_id);
 create index if not exists idx_stock_movements_product_id on public.stock_movements(product_id);
 create index if not exists idx_stock_movements_product_unit_id on public.stock_movements(product_unit_id);
@@ -744,6 +790,28 @@ create index if not exists idx_cash_sessions_opened_at on public.cash_sessions(o
 create index if not exists idx_cash_movements_session_id on public.cash_movements(cash_session_id);
 create index if not exists idx_cash_movements_reference on public.cash_movements(reference_type, reference_id);
 create index if not exists idx_cash_movements_created_at on public.cash_movements(created_at desc);
+
+alter table public.cash_sessions
+  alter column opened_by drop not null;
+
+alter table public.cash_movements
+  alter column user_id drop not null;
+
+alter table public.cash_sessions
+  drop constraint if exists cash_sessions_expected_amount_check;
+
+alter table public.cash_movements
+  drop constraint if exists cash_movements_amount_check;
+
+alter table public.cash_movements
+  add constraint cash_movements_amount_check
+  check (
+    amount >= 0
+    and (
+      amount > 0
+      or movement_type in ('OPENING', 'CLOSING')
+    )
+  );
 
 create index if not exists idx_sales_store_status on public.sales(store_id, status);
 create index if not exists idx_sales_customer_id on public.sales(customer_id);
@@ -851,6 +919,35 @@ begin
 end;
 $$;
 
+create or replace function public.ensure_default_product_code()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.internal_code is null or btrim(new.internal_code) = '' then
+    return new;
+  end if;
+
+  insert into public.product_codes (
+    product_id,
+    code,
+    code_type,
+    scope,
+    is_primary
+  )
+  values (
+    new.id,
+    format('ALPHA-%s', new.internal_code),
+    'CUSTOM',
+    'PRODUCT',
+    true
+  )
+  on conflict (code) do nothing;
+
+  return new;
+end;
+$$;
+
 drop trigger if exists trg_stores_set_updated_at on public.stores;
 create trigger trg_stores_set_updated_at
 before update on public.stores
@@ -890,6 +987,11 @@ drop trigger if exists trg_products_internal_code on public.products;
 create trigger trg_products_internal_code
 before insert on public.products
 for each row execute function public.set_product_internal_code();
+
+drop trigger if exists trg_products_default_code on public.products;
+create trigger trg_products_default_code
+after insert on public.products
+for each row execute function public.ensure_default_product_code();
 
 drop trigger if exists trg_product_units_set_updated_at on public.product_units;
 create trigger trg_product_units_set_updated_at
@@ -1102,6 +1204,32 @@ alter table public.sale_return_items enable row level security;
 alter table public.accounts_payable enable row level security;
 alter table public.accounts_receivable enable row level security;
 alter table public.audit_logs enable row level security;
+
+insert into public.product_codes (
+  product_id,
+  code,
+  code_type,
+  scope,
+  is_primary
+)
+select
+  p.id,
+  format('ALPHA-%s', p.internal_code),
+  'CUSTOM',
+  'PRODUCT',
+  true
+from public.products p
+where
+  p.internal_code is not null
+  and btrim(p.internal_code) <> ''
+  and not exists (
+    select 1
+    from public.product_codes pc
+    where
+      pc.product_id = p.id
+      and pc.code = format('ALPHA-%s', p.internal_code)
+  )
+on conflict (code) do nothing;
 
 drop policy if exists stores_tenant_policy on public.stores;
 create policy stores_tenant_policy

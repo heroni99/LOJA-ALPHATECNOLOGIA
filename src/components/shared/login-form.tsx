@@ -7,11 +7,12 @@ import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
+import { parseApiError } from "@/lib/api-error"
+import { toast } from "@/lib/toast"
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { toast } from "@/components/ui/toast"
 import { createClient } from "@/lib/supabase/client"
 
 const loginSchema = z.object({
@@ -44,20 +45,23 @@ export function LoginForm({
       return
     }
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword(values)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.auth.signInWithPassword(values)
 
-    if (error) {
-      toast.error(error.message)
-      return
+      if (error) {
+        throw error
+      }
+
+      toast.success("Login realizado com sucesso.")
+
+      startTransition(() => {
+        router.replace("/dashboard")
+        router.refresh()
+      })
+    } catch (error) {
+      toast.error(parseApiError(error))
     }
-
-    toast.success("Login realizado com sucesso.")
-
-    startTransition(() => {
-      router.replace("/dashboard")
-      router.refresh()
-    })
   }
 
   return (
@@ -84,52 +88,53 @@ export function LoginForm({
         ) : null}
         <Form {...form}>
           <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>E-mail</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="email"
-                      placeholder="voce@alphatecnologia.com.br"
-                      autoComplete="email"
-                      disabled={isPending || !supabaseReady}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Senha</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="password"
-                      placeholder="••••••••"
-                      autoComplete="current-password"
-                      disabled={isPending || !supabaseReady}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button
-              type="submit"
-              className="w-full gap-2"
-              disabled={isPending || !supabaseReady}
-            >
-              {isPending ? "Entrando..." : "Acessar painel"}
-              <ArrowRight className="size-4" />
-            </Button>
+            <fieldset disabled={isPending || !supabaseReady} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>E-mail</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="email"
+                        placeholder="voce@alphatecnologia.com.br"
+                        autoComplete="email"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Senha</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="password"
+                        placeholder="••••••••"
+                        autoComplete="current-password"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <LoadingButton
+                type="submit"
+                className="w-full gap-2"
+                isLoading={isPending}
+                loadingLabel="Entrando..."
+              >
+                Acessar painel
+                <ArrowRight className="size-4" />
+              </LoadingButton>
+            </fieldset>
           </form>
         </Form>
       </CardContent>

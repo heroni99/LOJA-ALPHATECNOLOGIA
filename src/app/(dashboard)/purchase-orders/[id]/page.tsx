@@ -135,6 +135,11 @@ export default async function PurchaseOrderDetailPage({
     <div className="flex flex-col gap-6">
       <PageHeader
         title={purchaseOrder.orderNumber}
+        backHref="/purchase-orders"
+        breadcrumbs={[
+          { label: "Pedidos de compra", href: "/purchase-orders" },
+          { label: purchaseOrder.orderNumber },
+        ]}
         titleSlot={
           <>
             <Badge variant="outline" className="border-primary/20 text-primary">

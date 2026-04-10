@@ -39,8 +39,9 @@ begin
     from public.stock_locations
     where id = p_location_id
       and store_id = p_store_id
+      and active = true
   ) then
-    raise exception 'O local informado não pertence à loja atual.';
+    raise exception 'O local informado não pertence à loja atual ou está inativo.';
   end if;
 
   insert into public.stock_balances (
@@ -128,8 +129,9 @@ begin
     from public.stock_locations
     where id = p_location_id
       and store_id = p_store_id
+      and active = true
   ) then
-    raise exception 'O local informado não pertence à loja atual.';
+    raise exception 'O local informado não pertence à loja atual ou está inativo.';
   end if;
 
   insert into public.stock_balances (
@@ -238,8 +240,9 @@ begin
     from public.stock_locations
     where id = p_from_location_id
       and store_id = p_store_id
+      and active = true
   ) then
-    raise exception 'O local de origem não pertence à loja atual.';
+    raise exception 'O local de origem não pertence à loja atual ou está inativo.';
   end if;
 
   if not exists (
@@ -247,8 +250,9 @@ begin
     from public.stock_locations
     where id = p_to_location_id
       and store_id = p_store_id
+      and active = true
   ) then
-    raise exception 'O local de destino não pertence à loja atual.';
+    raise exception 'O local de destino não pertence à loja atual ou está inativo.';
   end if;
 
   insert into public.stock_balances (
@@ -378,10 +382,62 @@ begin
     btrim(p_name),
     nullif(btrim(coalesce(p_description, '')), ''),
     coalesce(p_is_default, false),
-    coalesce(p_active, true)
+    case
+      when coalesce(p_is_default, false) then true
+      else coalesce(p_active, true)
+    end
   );
 
   return v_location_id;
+end;
+$$;
+
+create or replace function public.inventory_update_location(
+  p_location_id uuid,
+  p_store_id uuid,
+  p_name text,
+  p_description text default null,
+  p_is_default boolean default false,
+  p_active boolean default true
+)
+returns uuid
+language plpgsql
+set search_path = public
+as $$
+begin
+  if nullif(btrim(coalesce(p_name, '')), '') is null then
+    raise exception 'O nome do local é obrigatório.';
+  end if;
+
+  if not exists (
+    select 1
+    from public.stock_locations
+    where id = p_location_id
+      and store_id = p_store_id
+  ) then
+    raise exception 'O local informado não pertence à loja atual.';
+  end if;
+
+  if p_is_default then
+    update public.stock_locations
+    set is_default = false
+    where store_id = p_store_id
+      and id <> p_location_id
+      and is_default = true;
+  end if;
+
+  update public.stock_locations
+  set name = btrim(p_name),
+      description = nullif(btrim(coalesce(p_description, '')), ''),
+      is_default = coalesce(p_is_default, false),
+      active = case
+        when coalesce(p_is_default, false) then true
+        else coalesce(p_active, true)
+      end
+  where id = p_location_id
+    and store_id = p_store_id;
+
+  return p_location_id;
 end;
 $$;
 

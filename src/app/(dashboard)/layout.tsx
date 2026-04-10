@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation"
 import type { User } from "@supabase/supabase-js"
 
+import { QueryProvider } from "@/components/providers/query-provider"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
 import { createClient, getCurrentUser } from "@/lib/supabase/server"
 
@@ -74,13 +75,15 @@ export default async function DashboardLayout({
   } catch {}
 
   return (
-    <DashboardShell
-      storeName={storeName}
-      userName={userName}
-      roleName={roleName}
-      userEmail={user.email ?? null}
-    >
-      {children}
-    </DashboardShell>
+    <QueryProvider>
+      <DashboardShell
+        storeName={storeName}
+        userName={userName}
+        roleName={roleName}
+        userEmail={user.email ?? null}
+      >
+        {children}
+      </DashboardShell>
+    </QueryProvider>
   )
 }

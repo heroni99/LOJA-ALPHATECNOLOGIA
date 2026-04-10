@@ -2,20 +2,109 @@ import "server-only"
 
 import { getCurrentUser, createClient } from "@/lib/supabase/server"
 import {
-  PRODUCTS_PAGE_SIZE,
+  type ProductCode,
   type ProductDetail,
   type ProductFormOption,
   type ProductListFilters,
   type ProductMovement,
+  type ProductMutationInput,
+  type ProductQuickSearchResult,
   type ProductStockBalance,
   type ProductSummary,
   parseDbMoneyToCents,
-  type ProductMutationInput,
 } from "@/lib/products"
 
 type StoreContext = {
   userId: string
   storeId: string
+}
+
+type CategoryRelation = { id: string; name: string | null } | { id: string; name: string | null }[]
+type SupplierRelation =
+  | { id: string; name: string | null; trade_name: string | null }
+  | { id: string; name: string | null; trade_name: string | null }[]
+
+type ProductRecord = {
+  id: string
+  category_id: string
+  supplier_id: string | null
+  name: string
+  description: string | null
+  image_url: string | null
+  brand: string | null
+  model: string | null
+  internal_code: string
+  supplier_code: string | null
+  ncm: string | null
+  cest: string | null
+  cfop_default: string | null
+  origin_code: string | null
+  tax_category: string | null
+  cost_price: number | string | null
+  sale_price: number | string | null
+  stock_min: number | string | null
+  is_service: boolean
+  has_serial_control: boolean
+  needs_price_review: boolean
+  active: boolean
+  created_at: string
+  updated_at: string
+  categories?: CategoryRelation | null
+  suppliers?: SupplierRelation | null
+  stock_balances?: { quantity: number | string | null }[] | null
+}
+
+type ProductCodeRecord = {
+  id: string
+  code: string
+  code_type: string
+  scope: string
+  is_primary: boolean
+  created_at: string
+}
+
+type StockBalanceRecord = {
+  id: string
+  location_id: string
+  quantity: number | string | null
+  updated_at: string
+  stock_locations?:
+    | { id: string; name: string | null }
+    | { id: string; name: string | null }[]
+    | null
+}
+
+type MovementRecord = {
+  id: string
+  movement_type: string
+  quantity: number | string | null
+  unit_cost: number | string | null
+  reference_type: string | null
+  notes: string | null
+  created_at: string
+  stock_locations?:
+    | { id: string; name: string | null }
+    | { id: string; name: string | null }[]
+    | null
+}
+
+type QuickSearchProductRecord = {
+  id: string
+  name: string
+  internal_code: string
+  sale_price: number | string | null
+  has_serial_control: boolean
+  image_url: string | null
+  is_service: boolean
+  active: boolean
+  stock_balances?: { quantity: number | string | null }[] | null
+}
+
+type ProductFullDetail = {
+  product: ProductDetail
+  codes: ProductCode[]
+  stockBalances: ProductStockBalance[]
+  recentMovements: ProductMovement[]
 }
 
 type ListProductsResult = {
@@ -26,41 +115,6 @@ type ListProductsResult = {
   pageSize: number
 }
 
-type ProductFullDetail = {
-  product: ProductDetail
-  stockBalances: ProductStockBalance[]
-  recentMovements: ProductMovement[]
-}
-
-type ProductRecord = {
-  id: string
-  category_id: string
-  supplier_id: string | null
-  name: string
-  image_url: string | null
-  brand: string | null
-  model: string | null
-  internal_code: string
-  ncm: string | null
-  cest: string | null
-  cfop_default: string | null
-  origin_code: string | null
-  cost_price: number | string | null
-  sale_price: number | string | null
-  is_service: boolean
-  has_serial_control: boolean
-  needs_price_review: boolean
-  active: boolean
-  created_at: string
-  updated_at: string
-  categories?: { id: string; name: string | null } | { id: string; name: string | null }[] | null
-  suppliers?:
-    | { id: string; name: string | null; trade_name: string | null }
-    | { id: string; name: string | null; trade_name: string | null }[]
-    | null
-  stock_balances?: { quantity: number | string | null }[] | null
-}
-
 function getSingleRelation<T>(value: T | T[] | null | undefined) {
   if (Array.isArray(value)) {
     return value[0] ?? null
@@ -69,26 +123,48 @@ function getSingleRelation<T>(value: T | T[] | null | undefined) {
   return value ?? null
 }
 
+function parseQuantity(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0)
+
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 function sumStockBalances(
   balances: { quantity: number | string | null }[] | null | undefined
 ) {
   return (balances ?? []).reduce((accumulator, balance) => {
-    const quantity = Number(balance.quantity ?? 0)
-
-    return accumulator + (Number.isFinite(quantity) ? quantity : 0)
+    return accumulator + parseQuantity(balance.quantity)
   }, 0)
+}
+
+function mapSupplierName(
+  supplier:
+    | { id: string; name: string | null; trade_name: string | null }
+    | null
+    | undefined
+) {
+  return supplier?.trade_name ?? supplier?.name ?? null
 }
 
 function mapProductSummary(record: ProductRecord): ProductSummary {
   const category = getSingleRelation(record.categories)
+  const supplier = getSingleRelation(record.suppliers)
+  const stockTotal = record.is_service ? 0 : sumStockBalances(record.stock_balances)
+  const stockMin = record.is_service ? 0 : parseQuantity(record.stock_min)
 
   return {
     id: record.id,
     internalCode: record.internal_code,
     name: record.name,
+    imageUrl: record.image_url,
+    categoryId: record.category_id,
     categoryName: category?.name ?? null,
+    supplierId: record.supplier_id,
+    supplierName: mapSupplierName(supplier),
     salePriceCents: parseDbMoneyToCents(record.sale_price),
-    totalStock: sumStockBalances(record.stock_balances),
+    stockTotal,
+    stockMin,
+    isBelowMin: !record.is_service && stockTotal < stockMin,
     isService: record.is_service,
     active: record.active,
   }
@@ -106,22 +182,49 @@ function mapProductDetail(record: ProductRecord): ProductDetail {
     categoryId: record.category_id,
     categoryName: category?.name ?? null,
     supplierId: record.supplier_id,
-    supplierName: supplier?.trade_name ?? supplier?.name ?? null,
+    supplierName: mapSupplierName(supplier),
+    description: record.description,
     brand: record.brand,
     model: record.model,
+    supplierCode: record.supplier_code,
     ncm: record.ncm,
     cest: record.cest,
     cfopDefault: record.cfop_default,
     originCode: record.origin_code,
+    taxCategory: record.tax_category,
     costPriceCents: parseDbMoneyToCents(record.cost_price),
     salePriceCents: parseDbMoneyToCents(record.sale_price),
-    totalStock: sumStockBalances(record.stock_balances),
+    stockMin: record.is_service ? 0 : parseQuantity(record.stock_min),
+    stockTotal: record.is_service ? 0 : sumStockBalances(record.stock_balances),
     hasSerialControl: record.has_serial_control,
     needsPriceReview: record.needs_price_review,
     isService: record.is_service,
     active: record.active,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
+  }
+}
+
+function mapProductCode(record: ProductCodeRecord): ProductCode {
+  return {
+    id: record.id,
+    code: record.code,
+    codeType: record.code_type,
+    scope: record.scope,
+    isPrimary: record.is_primary,
+    createdAt: record.created_at,
+  }
+}
+
+function mapQuickSearchProduct(record: QuickSearchProductRecord): ProductQuickSearchResult {
+  return {
+    id: record.id,
+    name: record.name,
+    internalCode: record.internal_code,
+    salePriceCents: parseDbMoneyToCents(record.sale_price),
+    hasSerialControl: record.has_serial_control,
+    stockTotal: record.is_service ? 0 : sumStockBalances(record.stock_balances),
+    imageUrl: record.image_url,
   }
 }
 
@@ -191,13 +294,13 @@ export async function listProducts(
 ): Promise<ListProductsResult> {
   const supabase = await createClient({ serviceRole: true })
   const buildQuery = (page: number) => {
-    const from = (page - 1) * PRODUCTS_PAGE_SIZE
-    const to = from + PRODUCTS_PAGE_SIZE - 1
+    const from = (page - 1) * filters.limit
+    const to = from + filters.limit - 1
 
     let query = supabase
       .from("products")
       .select(
-        "id, internal_code, name, sale_price, is_service, active, categories(id, name), stock_balances(quantity)",
+        "id, category_id, supplier_id, name, image_url, internal_code, sale_price, stock_min, is_service, active, categories(id, name), suppliers(id, name, trade_name), stock_balances(quantity)",
         { count: "exact" }
       )
       .eq("store_id", storeId)
@@ -206,9 +309,8 @@ export async function listProducts(
 
     if (filters.search) {
       const sanitized = filters.search.replace(/[(),]/g, " ").trim()
-
       query = query.or(
-        `name.ilike.%${sanitized}%,internal_code.ilike.%${sanitized}%,brand.ilike.%${sanitized}%,model.ilike.%${sanitized}%`
+        `name.ilike.%${sanitized}%,internal_code.ilike.%${sanitized}%,supplier_code.ilike.%${sanitized}%,brand.ilike.%${sanitized}%,model.ilike.%${sanitized}%`
       )
     }
 
@@ -216,8 +318,16 @@ export async function listProducts(
       query = query.eq("category_id", filters.categoryId)
     }
 
+    if (filters.supplierId) {
+      query = query.eq("supplier_id", filters.supplierId)
+    }
+
     if (filters.active !== null) {
       query = query.eq("active", filters.active)
+    }
+
+    if (filters.isService !== null) {
+      query = query.eq("is_service", filters.isService)
     }
 
     return query
@@ -233,12 +343,11 @@ export async function listProducts(
   }
 
   const totalCount = totalCountResult ?? 0
-  const totalPages = Math.max(1, Math.ceil(totalCount / PRODUCTS_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalCount / filters.limit))
   const currentPage = Math.min(filters.page, totalPages)
 
   if ((data?.length ?? 0) === 0 && totalCount > 0 && currentPage !== filters.page) {
     const fallbackResult = await buildQuery(currentPage)
-
     data = fallbackResult.data
     error = fallbackResult.error
   }
@@ -247,14 +356,12 @@ export async function listProducts(
     throw error
   }
 
-  const items = ((data ?? []) as ProductRecord[]).map(mapProductSummary)
-
   return {
-    items,
+    items: ((data ?? []) as ProductRecord[]).map(mapProductSummary),
     totalCount,
     totalPages,
     page: currentPage,
-    pageSize: PRODUCTS_PAGE_SIZE,
+    pageSize: filters.limit,
   }
 }
 
@@ -263,7 +370,7 @@ export async function getProductById(productId: string, storeId: string) {
   const { data, error } = await supabase
     .from("products")
     .select(
-      "id, category_id, supplier_id, name, image_url, brand, model, internal_code, ncm, cest, cfop_default, origin_code, cost_price, sale_price, has_serial_control, needs_price_review, is_service, active, created_at, updated_at, categories(id, name), suppliers(id, name, trade_name), stock_balances(quantity)"
+      "id, category_id, supplier_id, name, description, image_url, brand, model, internal_code, supplier_code, ncm, cest, cfop_default, origin_code, tax_category, cost_price, sale_price, stock_min, has_serial_control, needs_price_review, is_service, active, created_at, updated_at, categories(id, name), suppliers(id, name, trade_name), stock_balances(quantity)"
     )
     .eq("store_id", storeId)
     .eq("id", productId)
@@ -280,6 +387,22 @@ export async function getProductById(productId: string, storeId: string) {
   return mapProductDetail(data as ProductRecord)
 }
 
+export async function getProductCodes(productId: string): Promise<ProductCode[]> {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("product_codes")
+    .select("id, code, code_type, scope, is_primary, created_at")
+    .eq("product_id", productId)
+    .order("is_primary", { ascending: false })
+    .order("created_at", { ascending: true })
+
+  if (error) {
+    throw error
+  }
+
+  return ((data ?? []) as ProductCodeRecord[]).map(mapProductCode)
+}
+
 export async function getProductStockBalances(
   productId: string
 ): Promise<ProductStockBalance[]> {
@@ -294,14 +417,14 @@ export async function getProductStockBalances(
     throw error
   }
 
-  return (data ?? []).map((item) => {
+  return ((data ?? []) as StockBalanceRecord[]).map((item) => {
     const location = getSingleRelation(item.stock_locations)
 
     return {
       id: item.id,
       locationId: item.location_id,
       locationName: location?.name ?? null,
-      quantity: Number(item.quantity ?? 0),
+      quantity: parseQuantity(item.quantity),
       updatedAt: item.updated_at,
     }
   })
@@ -318,19 +441,19 @@ export async function getProductRecentMovements(
     )
     .eq("product_id", productId)
     .order("created_at", { ascending: false })
-    .limit(10)
+    .limit(20)
 
   if (error) {
     throw error
   }
 
-  return (data ?? []).map((movement) => {
+  return ((data ?? []) as MovementRecord[]).map((movement) => {
     const location = getSingleRelation(movement.stock_locations)
 
     return {
       id: movement.id,
       movementType: movement.movement_type,
-      quantity: Number(movement.quantity ?? 0),
+      quantity: parseQuantity(movement.quantity),
       unitCostCents: parseDbMoneyToCents(movement.unit_cost),
       referenceType: movement.reference_type,
       notes: movement.notes,
@@ -350,15 +473,17 @@ export async function getProductFullDetail(
     return null
   }
 
-  const [stockBalances, recentMovements] = await Promise.all([
+  const [codes, stockBalances, recentMovements] = await Promise.all([
+    getProductCodes(productId),
     getProductStockBalances(productId),
     getProductRecentMovements(productId),
   ])
 
   return {
     product,
-    stockBalances,
-    recentMovements,
+    codes,
+    stockBalances: product.isService ? [] : stockBalances,
+    recentMovements: product.isService ? [] : recentMovements,
   }
 }
 
@@ -371,12 +496,15 @@ export async function createProduct(
   await ensureCategoryInStore(supabase, storeId, input.category_id)
   await ensureSupplierInStore(supabase, storeId, input.supplier_id ?? null)
 
+  const payload = {
+    store_id: storeId,
+    ...input,
+    stock_min: input.is_service ? 0 : input.stock_min,
+  }
+
   const { data, error } = await supabase
     .from("products")
-    .insert({
-      store_id: storeId,
-      ...input,
-    })
+    .insert(payload)
     .select("id")
     .single()
 
@@ -384,7 +512,7 @@ export async function createProduct(
     throw error
   }
 
-  return getProductById(data.id, storeId)
+  return getProductFullDetail(data.id, storeId)
 }
 
 export async function updateProduct(
@@ -411,9 +539,14 @@ export async function updateProduct(
   await ensureCategoryInStore(supabase, storeId, input.category_id)
   await ensureSupplierInStore(supabase, storeId, input.supplier_id ?? null)
 
+  const payload = {
+    ...input,
+    stock_min: input.is_service ? 0 : input.stock_min,
+  }
+
   const { error } = await supabase
     .from("products")
-    .update(input)
+    .update(payload)
     .eq("store_id", storeId)
     .eq("id", productId)
 
@@ -421,7 +554,24 @@ export async function updateProduct(
     throw error
   }
 
-  return getProductById(productId, storeId)
+  return getProductFullDetail(productId, storeId)
+}
+
+export async function softDeleteProduct(productId: string, storeId: string) {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("products")
+    .update({ active: false })
+    .eq("store_id", storeId)
+    .eq("id", productId)
+    .select("id")
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return Boolean(data)
 }
 
 export async function updateProductImageUrl(
@@ -450,6 +600,115 @@ export async function updateProductImageUrl(
     id: data.id,
     imageUrl: data.image_url as string | null,
   }
+}
+
+export async function searchProductsQuick(
+  storeId: string,
+  rawQuery: string,
+  options: {
+    limit?: number
+    active?: boolean | null
+    isService?: boolean | null
+  } = {}
+) {
+  const query = rawQuery.trim()
+
+  if (!query) {
+    return [] satisfies ProductQuickSearchResult[]
+  }
+
+  const limit = Math.min(Math.max(options.limit ?? 10, 1), 20)
+  const sanitized = query.replace(/[(),]/g, " ").trim()
+  const supabase = await createClient({ serviceRole: true })
+
+  let directQuery = supabase
+    .from("products")
+    .select(
+      "id, name, internal_code, sale_price, has_serial_control, image_url, is_service, active, stock_balances(quantity)"
+    )
+    .eq("store_id", storeId)
+    .order("name", { ascending: true })
+    .or(
+      `name.ilike.%${sanitized}%,internal_code.ilike.%${sanitized}%,supplier_code.ilike.%${sanitized}%`
+    )
+    .limit(limit)
+
+  if (options.active !== null && options.active !== undefined) {
+    directQuery = directQuery.eq("active", options.active)
+  }
+
+  if (options.isService !== null && options.isService !== undefined) {
+    directQuery = directQuery.eq("is_service", options.isService)
+  }
+
+  const [directResult, codeResult] = await Promise.all([
+    directQuery,
+    supabase
+      .from("product_codes")
+      .select("product_id")
+      .ilike("code", `%${sanitized}%`)
+      .limit(limit),
+  ])
+
+  if (directResult.error) {
+    throw directResult.error
+  }
+
+  if (codeResult.error) {
+    throw codeResult.error
+  }
+
+  const directRows = (directResult.data ?? []) as QuickSearchProductRecord[]
+  const productIds = dedupeStrings([
+    ...directRows.map((product) => product.id),
+    ...((codeResult.data ?? []) as { product_id: string }[]).map((code) => code.product_id),
+  ])
+
+  const missingIds = productIds.filter(
+    (productId) => !directRows.some((product) => product.id === productId)
+  )
+
+  let extraRows: QuickSearchProductRecord[] = []
+
+  if (missingIds.length > 0) {
+    let extraQuery = supabase
+      .from("products")
+      .select(
+        "id, name, internal_code, sale_price, has_serial_control, image_url, is_service, active, stock_balances(quantity)"
+      )
+      .eq("store_id", storeId)
+      .in("id", missingIds)
+      .order("name", { ascending: true })
+
+    if (options.active !== null && options.active !== undefined) {
+      extraQuery = extraQuery.eq("active", options.active)
+    }
+
+    if (options.isService !== null && options.isService !== undefined) {
+      extraQuery = extraQuery.eq("is_service", options.isService)
+    }
+
+    const extraResult = await extraQuery
+
+    if (extraResult.error) {
+      throw extraResult.error
+    }
+
+    extraRows = (extraResult.data ?? []) as QuickSearchProductRecord[]
+  }
+
+  const ordered = productIds
+    .map((productId) => {
+      return (
+        directRows.find((product) => product.id === productId) ??
+        extraRows.find((product) => product.id === productId) ??
+        null
+      )
+    })
+    .filter((product): product is QuickSearchProductRecord => Boolean(product))
+    .slice(0, limit)
+
+  return ordered.map(mapQuickSearchProduct)
 }
 
 async function ensureCategoryInStore(
@@ -496,4 +755,8 @@ async function ensureSupplierInStore(
   if (!data) {
     throw new Error("O fornecedor selecionado não pertence à loja atual.")
   }
+}
+
+function dedupeStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)))
 }

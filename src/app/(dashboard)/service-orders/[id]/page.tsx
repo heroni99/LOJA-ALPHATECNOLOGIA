@@ -162,6 +162,11 @@ export default async function ServiceOrderDetailPage({
     <div className="flex flex-col gap-6">
       <PageHeader
         title={detail.orderNumber}
+        backHref="/service-orders"
+        breadcrumbs={[
+          { label: "Ordens de serviço", href: "/service-orders" },
+          { label: detail.orderNumber },
+        ]}
         titleSlot={
           <>
             <Badge variant="outline" className="border-primary/20 text-primary">
