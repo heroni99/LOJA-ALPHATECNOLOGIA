@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 
 import { CustomerAutocomplete } from "@/components/pdv/customer-autocomplete"
+import { PdvScannerPanel } from "@/components/pdv/pdv-scanner-panel"
 import { MoneyInput } from "@/components/shared/money-input"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
@@ -622,6 +623,8 @@ export function PdvPage() {
                 </div>
               ) : null}
             </div>
+
+            <PdvScannerPanel onProductScanned={addResultToCart} />
 
             <div className="grid gap-3">
               {cartItems.length > 0 ? (

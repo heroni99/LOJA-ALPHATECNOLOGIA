@@ -1,13 +1,12 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { CheckCircle2, Loader2, QrCode, Smartphone } from "lucide-react"
+import { CheckCircle2, QrCode } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { QRCodeSVG } from "qrcode.react"
 
-import { SectionCard } from "@/components/shared/section-card"
+import { LoadingButton } from "@/components/shared/loading-button"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import { createClient as createBrowserClient } from "@/lib/supabase/client"
 import type { PdvSearchResult } from "@/lib/pdv"
@@ -166,106 +165,74 @@ export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
   }
 
   return (
-    <SectionCard
-      title="Scanner mobile"
-      description="Pareie um celular via Supabase Realtime para ler códigos de barras e enviar produtos direto para o carrinho."
-    >
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              className="h-11 px-5"
-              disabled={isCreatingSession}
-              onClick={handleCreateSession}
-            >
-              {isCreatingSession ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <Smartphone />
-              )}
-              {session ? "Gerar novo código" : "Usar celular como scanner"}
-            </Button>
+    <div className="grid gap-4 rounded-3xl border border-border/70 bg-background/70 p-4 shadow-sm shadow-black/5">
+      <div className="flex flex-wrap items-center gap-3">
+        <LoadingButton
+          type="button"
+          size="sm"
+          variant={session ? "outline" : "default"}
+          isLoading={isCreatingSession}
+          loadingLabel="Gerando..."
+          onClick={handleCreateSession}
+        >
+          {session ? "Gerar novo código" : "📱 Usar celular como leitor"}
+        </LoadingButton>
 
-            {session ? (
-              <Badge
-                variant="outline"
-                className={getScannerStatusClasses(session.status)}
-              >
-                {session.status === "CONNECTED" ? <CheckCircle2 /> : <QrCode />}
-                {getScannerStatusLabel(session.status)}
-              </Badge>
-            ) : null}
+        {session ? (
+          <Badge
+            variant="outline"
+            className={getScannerStatusClasses(session.status)}
+          >
+            {session.status === "CONNECTED" ? <CheckCircle2 /> : <QrCode />}
+            {getScannerStatusLabel(session.status)}
+          </Badge>
+        ) : null}
+      </div>
+
+      {session ? (
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px] md:items-center">
+          <div className="space-y-3">
+            <div className="rounded-[24px] bg-[#111827] px-4 py-5 text-center text-white">
+              <p className="text-xs uppercase tracking-[0.18em] text-white/60">
+                Código de pareamento
+              </p>
+              <strong className="mt-3 block text-3xl font-semibold tracking-[0.35em] sm:text-4xl">
+                {session.pairingCode}
+              </strong>
+            </div>
+
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>Abra essa URL no celular ou escaneie o QR Code.</p>
+              {scannerUrl ? (
+                <p className="break-all rounded-2xl border border-border/70 bg-muted/40 px-3 py-2 text-xs">
+                  {scannerUrl}
+                </p>
+              ) : null}
+              {isLocalOrigin ? (
+                <p className="text-amber-600">
+                  Em ambiente local, use um IP ou domínio acessível no celular.
+                  URLs com <code>localhost</code> não funcionam fora da máquina.
+                </p>
+              ) : null}
+            </div>
           </div>
 
-          {session ? (
-            <>
-              <div className="rounded-[28px] bg-[#111827] px-5 py-6 text-center text-white">
-                <p className="text-sm uppercase tracking-[0.18em] text-white/60">
-                  Código de pareamento
-                </p>
-                <strong className="mt-3 block text-4xl font-semibold tracking-[0.35em] sm:text-5xl">
-                  {session.pairingCode}
-                </strong>
-              </div>
-
-              <div className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  Abra a página do scanner no celular e informe o código acima.
-                </p>
-                <p>
-                  Depois do pareamento, cada leitura será enviada em tempo real
-                  para este PDV.
-                </p>
-                {scannerUrl ? (
-                  <p className="break-all rounded-2xl border border-border/70 bg-muted/40 px-3 py-2 text-xs">
-                    {scannerUrl}
-                  </p>
-                ) : null}
-                {isLocalOrigin ? (
-                  <p className="text-amber-600">
-                    Em ambiente local, use o IP ou um domínio acessível no celular.
-                    URLs com <code>localhost</code> não funcionam fora da máquina.
-                  </p>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <div className="rounded-[28px] border border-dashed border-border/70 bg-muted/30 px-5 py-6 text-sm text-muted-foreground">
-              Gere um código para conectar o celular e começar a escanear.
-            </div>
-          )}
+          <div className="flex min-h-[180px] items-center justify-center rounded-[24px] border border-border/70 bg-card p-4">
+            {scannerUrl ? (
+              <QRCodeSVG
+                value={scannerUrl}
+                size={148}
+                bgColor="#ffffff"
+                fgColor="#111827"
+                level="M"
+                includeMargin
+              />
+            ) : (
+              <p className="text-xs text-muted-foreground">Gerando QR Code...</p>
+            )}
+          </div>
         </div>
-
-        <div className="flex items-center justify-center rounded-[28px] border border-border/70 bg-background p-5">
-          {session && scannerUrl ? (
-            <div className="space-y-3 text-center">
-              <div className="inline-flex rounded-[24px] bg-white p-4 shadow-sm ring-1 ring-black/5">
-                <QRCodeSVG
-                  value={scannerUrl}
-                  size={176}
-                  bgColor="#ffffff"
-                  fgColor="#111827"
-                  level="M"
-                  includeMargin
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                QR code para abrir o scanner no celular
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3 text-center text-muted-foreground">
-              <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-muted">
-                <QrCode className="size-7" />
-              </div>
-              <p className="text-sm">
-                O QR code aparece aqui assim que a sessão for criada.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </SectionCard>
+      ) : null}
+    </div>
   )
 }
