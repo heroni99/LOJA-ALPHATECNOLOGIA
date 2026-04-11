@@ -3,6 +3,9 @@ import { NextResponse, type NextRequest } from "next/server"
 
 import { isSupabaseConfigured } from "@/lib/supabase/env"
 
+const PUBLIC_ROUTE_PREFIXES = ["/login", "/scanner"]
+const PUBLIC_API_ROUTE_PREFIXES = ["/api/scanner/pair", "/api/scanner/scan"]
+
 const PROTECTED_ROUTE_PREFIXES = [
   "/dashboard",
   "/products",
@@ -31,6 +34,18 @@ const PROTECTED_ROUTE_PREFIXES = [
   "/settings",
 ]
 
+function isPublicRoute(pathname: string) {
+  return PUBLIC_ROUTE_PREFIXES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  )
+}
+
+function isPublicApiRoute(pathname: string) {
+  return PUBLIC_API_ROUTE_PREFIXES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  )
+}
+
 function isProtectedRoute(pathname: string) {
   return PROTECTED_ROUTE_PREFIXES.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
@@ -39,6 +54,11 @@ function isProtectedRoute(pathname: string) {
 
 export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  if (isPublicRoute(pathname) || isPublicApiRoute(pathname)) {
+    return NextResponse.next()
+  }
+
   const requiresSessionCheck = pathname === "/login" || isProtectedRoute(pathname)
 
   if (!requiresSessionCheck) {
