@@ -49,6 +49,37 @@ type ScanFeedback = {
 }
 
 const SCANNER_REGION_ID = "alpha-mobile-scanner-region"
+const CAMERA_UNSUPPORTED_MESSAGE = "Câmera não suportada neste navegador"
+const CAMERA_PERMISSION_DENIED_MESSAGE =
+  "Permissão de câmera negada. Libere nas configurações."
+const CAMERA_BLOCKED_MESSAGE =
+  "Câmera bloqueada. Vá em Configurações > Privacidade > Câmera e permita o acesso para este site."
+
+function stopStream(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => track.stop())
+}
+
+function getCameraStartErrorMessage(error: unknown) {
+  if (
+    error instanceof Error &&
+    /notallowed|permission denied|denied|security|notreadable/i.test(
+      error.message
+    )
+  ) {
+    return CAMERA_BLOCKED_MESSAGE
+  }
+
+  if (
+    error instanceof Error &&
+    /notfound|device not found|devices not found|found no media|overconstrained/i.test(
+      error.message
+    )
+  ) {
+    return "Nenhuma câmera disponível neste dispositivo."
+  }
+
+  return CAMERA_BLOCKED_MESSAGE
+}
 
 export function ScannerPage({ initialCode }: ScannerPageProps) {
   const sessionRef = useRef<ScannerSession | null>(null)
@@ -69,6 +100,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
   const [session, setSession] = useState<ScannerSession | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isStartingScanner, setIsStartingScanner] = useState(false)
+  const [scannerRetryKey, setScannerRetryKey] = useState(0)
   const [feedback, setFeedback] = useState<ScanFeedback>({
     tone: "neutral",
     message: "Conecte o celular ao PDV para ativar a câmera.",
@@ -117,6 +149,31 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
 
         await destroyScanner()
 
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setFeedback({
+            tone: "error",
+            message: CAMERA_UNSUPPORTED_MESSAGE,
+          })
+          return
+        }
+
+        let permissionStream: MediaStream | null = null
+
+        try {
+          permissionStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+          })
+        } catch {
+          setFeedback({
+            tone: "error",
+            message: CAMERA_PERMISSION_DENIED_MESSAGE,
+          })
+          toast.error(CAMERA_PERMISSION_DENIED_MESSAGE)
+          return
+        } finally {
+          stopStream(permissionStream)
+        }
+
         const {
           Html5Qrcode,
           Html5QrcodeSupportedFormats,
@@ -141,17 +198,16 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
           ],
         })
         const config = {
-          fps: 12,
+          fps: 10,
           qrbox: {
-            width: 280,
-            height: 120,
+            width: 250,
+            height: 250,
           },
-          aspectRatio: 1.777778,
         }
 
         scannerRef.current = scanner
 
-        const onDecode = async (decodedText: string) => {
+        const onScanSuccess = async (decodedText: string) => {
           const activeSession = sessionRef.current
           const barcode = decodedText.trim()
 
@@ -223,27 +279,14 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
             }, 400)
           }
         }
+        const onScanError = () => {}
 
-        try {
-          await scanner.start(
-            {
-              facingMode: {
-                ideal: "environment",
-              },
-            },
-            config,
-            onDecode,
-            () => {}
-          )
-        } catch {
-          const cameras = await Html5Qrcode.getCameras()
-
-          if (!cameras.length) {
-            throw new Error("Nenhuma câmera disponível neste dispositivo.")
-          }
-
-          await scanner.start(cameras[0].id, config, onDecode, () => {})
-        }
+        await scanner.start(
+          { facingMode: "environment" },
+          config,
+          onScanSuccess,
+          onScanError
+        )
 
         if (!cancelled) {
           setFeedback({
@@ -252,7 +295,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
           })
         }
       } catch (error) {
-        const message = parseApiError(error)
+        const message = getCameraStartErrorMessage(error)
 
         setFeedback({
           tone: "error",
@@ -272,7 +315,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
       cancelled = true
       void destroyScanner()
     }
-  }, [session])
+  }, [scannerRetryKey, session])
 
   async function handlePair(codeOverride?: string) {
     const normalized = normalizePairingCode(codeOverride ?? pairingCode)
@@ -346,6 +389,14 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
       tone: "neutral",
       message: "Informe um novo código para conectar outro PDV.",
     })
+  }
+
+  function handleRetryCamera() {
+    setFeedback({
+      tone: "neutral",
+      message: "Tentando acessar a câmera novamente...",
+    })
+    setScannerRetryKey((current) => current + 1)
   }
 
   const feedbackClasses =
@@ -465,20 +516,14 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
                     type="button"
                     className="flex-1"
                     disabled={isStartingScanner}
-                    onClick={() => {
-                      setFeedback({
-                        tone: "neutral",
-                        message:
-                          "Aponte a câmera para o código de barras do produto.",
-                      })
-                    }}
+                    onClick={handleRetryCamera}
                   >
                     {isStartingScanner ? (
                       <Loader2 className="animate-spin" />
                     ) : (
                       <Camera />
                     )}
-                    {isStartingScanner ? "Abrindo câmera" : "Scanner pronto"}
+                    {isStartingScanner ? "Abrindo câmera" : "Tentar novamente"}
                   </Button>
                 </div>
               </div>
