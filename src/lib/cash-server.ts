@@ -126,6 +126,19 @@ function normalizeCashError(error: unknown) {
   return new Error(error.message ?? "Não foi possível processar a operação de caixa.")
 }
 
+function isMissingCashFunctionError(error: unknown) {
+  if (!isDatabaseErrorLike(error)) {
+    return false
+  }
+
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ")
+
+  return (
+    error.code === "PGRST202" ||
+    /Could not find the function public\.cash_/i.test(message)
+  )
+}
+
 function mapCashMovement(record: CashMovementRecord): CashMovement {
   const profile = getSingleRelation(record.profiles)
 
@@ -300,6 +313,41 @@ async function getCashSessionById(sessionId: string, storeId: string) {
   return mapCashSession(data as CashSessionRecord, terminalName, operatorName)
 }
 
+async function getCurrentOpenCashSession(storeId: string) {
+  const supabase = await createClient({ serviceRole: true })
+  const terminalMap = await getStoreTerminalMap(storeId)
+  const terminalIds = Array.from(terminalMap.keys())
+
+  if (terminalIds.length === 0) {
+    return null
+  }
+
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .select(
+      "id, cash_terminal_id, opened_by, closed_by, status, opening_amount, expected_amount, closing_amount, difference, opened_at, closed_at, notes"
+    )
+    .in("cash_terminal_id", terminalIds)
+    .eq("status", "OPEN")
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  if (!data) {
+    return null
+  }
+
+  const operatorName = await getProfileName(data.opened_by)
+  const terminalName =
+    terminalMap.get(data.cash_terminal_id)?.name ?? "Caixa Principal"
+
+  return mapCashSession(data as CashSessionRecord, terminalName, operatorName)
+}
+
 async function getCashMovementTotalsBySession(sessionId: string) {
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
@@ -353,6 +401,70 @@ async function getCurrentCashSessionPayload(
   }
 }
 
+async function createAutomaticCashSession(storeId: string) {
+  const terminals = await listStoreCashTerminals(storeId)
+  const terminal = terminals.find((item) => item.active)
+
+  if (!terminal) {
+    throw new Error("Nenhum terminal de caixa encontrado.")
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("cash_sessions")
+    .insert({
+      cash_terminal_id: terminal.id,
+      opened_by: null,
+      status: "OPEN",
+      opening_amount: 0,
+      expected_amount: 0,
+      notes: "Sessão aberta automaticamente",
+    })
+    .select(
+      "id, cash_terminal_id, opened_by, closed_by, status, opening_amount, expected_amount, closing_amount, difference, opened_at, closed_at, notes"
+    )
+    .single()
+
+  if (error) {
+    throw error
+  }
+
+  const session = mapCashSession(
+    data as CashSessionRecord,
+    terminal.name,
+    "Sistema"
+  )
+
+  const { error: movementError } = await supabase
+    .from("cash_movements")
+    .insert({
+      cash_session_id: session.id,
+      movement_type: "OPENING",
+      amount: 0,
+      payment_method: "CASH",
+      reference_type: "CASH_SESSION",
+      reference_id: session.id,
+      description: "Sessão aberta automaticamente",
+      user_id: null,
+    })
+
+  if (movementError) {
+    throw movementError
+  }
+
+  return session
+}
+
+async function getOrCreateCurrentCashSessionWithoutRpc(storeId: string) {
+  const currentSession = await getCurrentOpenCashSession(storeId)
+
+  if (currentSession) {
+    return currentSession
+  }
+
+  return createAutomaticCashSession(storeId)
+}
+
 export async function getOrCreateCurrentCashSession(storeId: string, _userId: string) {
   void _userId
   const supabase = await createClient({ serviceRole: true })
@@ -361,6 +473,10 @@ export async function getOrCreateCurrentCashSession(storeId: string, _userId: st
   })
 
   if (error) {
+    if (isMissingCashFunctionError(error)) {
+      return getOrCreateCurrentCashSessionWithoutRpc(storeId)
+    }
+
     throw normalizeCashError(error)
   }
 
