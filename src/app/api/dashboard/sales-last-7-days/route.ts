@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 
-import { getDashboardTodaySnapshot } from "@/lib/dashboard-server"
+import { getDashboardSalesLast7Days } from "@/lib/dashboard-server"
 import {
   getRouteErrorDetails,
   getRouteErrorMessage,
@@ -16,19 +16,18 @@ export async function GET() {
 
   try {
     storeContext = await getRouteStoreContext()
+    const points = await getDashboardSalesLast7Days(storeContext.storeId)
 
-    const snapshot = await getDashboardTodaySnapshot(storeContext.storeId)
-
-    return NextResponse.json({
-      total_value: snapshot.totalValueCents,
-      total_count: snapshot.totalCount,
-      average_ticket: snapshot.averageTicketCents,
-      cancelled_count: snapshot.cancelledCount,
-      cash_session_open: snapshot.cashSessionOpen,
-    })
+    return NextResponse.json(
+      points.map((point) => ({
+        date: point.date,
+        value: point.valueCents,
+        count: point.count,
+      }))
+    )
   } catch (error) {
-    console.error("dashboard/today error", {
-      route: "/api/dashboard/today",
+    console.error("dashboard/sales-last-7-days error", {
+      route: "/api/dashboard/sales-last-7-days",
       userId: storeContext?.userId ?? null,
       storeId: storeContext?.storeId ?? null,
       error: getRouteErrorDetails(error),

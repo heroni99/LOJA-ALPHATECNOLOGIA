@@ -1,23 +1,21 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import { getDashboardLowStock } from "@/lib/dashboard-server"
-import { getCurrentStoreContext } from "@/lib/products-server"
+import {
+  getRouteErrorDetails,
+  getRouteErrorMessage,
+  getRouteErrorStatus,
+  getRouteStoreContext,
+  type RouteStoreContext,
+} from "@/lib/route-store-context"
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível carregar os alertas de estoque."
-}
+export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
-  try {
-    const storeContext = await getCurrentStoreContext()
+  let storeContext: RouteStoreContext | null = null
 
-    if (!storeContext) {
-      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
-    }
+  try {
+    storeContext = await getRouteStoreContext()
 
     const rawThreshold = Number.parseInt(
       request.nextUrl.searchParams.get("threshold") ?? "5",
@@ -28,16 +26,26 @@ export async function GET(request: NextRequest) {
       Number.isFinite(rawThreshold) ? rawThreshold : 5
     )
 
-    return NextResponse.json({
-      data: items.map((item) => ({
+    return NextResponse.json(
+      items.map((item) => ({
         id: item.id,
         name: item.name,
         internal_code: item.internalCode,
         current_stock: item.currentStock,
         stock_min: item.stockMin,
-      })),
-    })
+      }))
+    )
   } catch (error) {
-    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 })
+    console.error("dashboard/low-stock error", {
+      route: "/api/dashboard/low-stock",
+      userId: storeContext?.userId ?? null,
+      storeId: storeContext?.storeId ?? null,
+      error: getRouteErrorDetails(error),
+    })
+
+    return NextResponse.json(
+      { error: getRouteErrorMessage(error) },
+      { status: getRouteErrorStatus(error) }
+    )
   }
 }

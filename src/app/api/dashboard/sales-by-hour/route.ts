@@ -1,34 +1,41 @@
 import { NextResponse } from "next/server"
 
 import { getDashboardSalesByHour } from "@/lib/dashboard-server"
-import { getCurrentStoreContext } from "@/lib/products-server"
+import {
+  getRouteErrorDetails,
+  getRouteErrorMessage,
+  getRouteErrorStatus,
+  getRouteStoreContext,
+  type RouteStoreContext,
+} from "@/lib/route-store-context"
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível carregar as vendas por hora."
-}
+export const dynamic = "force-dynamic"
 
 export async function GET() {
+  let storeContext: RouteStoreContext | null = null
+
   try {
-    const storeContext = await getCurrentStoreContext()
-
-    if (!storeContext) {
-      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
-    }
-
+    storeContext = await getRouteStoreContext()
     const points = await getDashboardSalesByHour(storeContext.storeId)
 
-    return NextResponse.json({
-      data: points.map((point) => ({
+    return NextResponse.json(
+      points.map((point) => ({
         hour: point.hour,
         value: point.valueCents,
         count: point.count,
-      })),
-    })
+      }))
+    )
   } catch (error) {
-    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 })
+    console.error("dashboard/sales-by-hour error", {
+      route: "/api/dashboard/sales-by-hour",
+      userId: storeContext?.userId ?? null,
+      storeId: storeContext?.storeId ?? null,
+      error: getRouteErrorDetails(error),
+    })
+
+    return NextResponse.json(
+      { error: getRouteErrorMessage(error) },
+      { status: getRouteErrorStatus(error) }
+    )
   }
 }

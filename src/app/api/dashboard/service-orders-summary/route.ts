@@ -1,35 +1,41 @@
 import { NextResponse } from "next/server"
 
 import { getDashboardServiceOrdersSummary } from "@/lib/dashboard-server"
-import { getCurrentStoreContext } from "@/lib/products-server"
+import {
+  getRouteErrorDetails,
+  getRouteErrorMessage,
+  getRouteErrorStatus,
+  getRouteStoreContext,
+  type RouteStoreContext,
+} from "@/lib/route-store-context"
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível carregar o resumo das ordens de serviço."
-}
+export const dynamic = "force-dynamic"
 
 export async function GET() {
+  let storeContext: RouteStoreContext | null = null
+
   try {
-    const storeContext = await getCurrentStoreContext()
-
-    if (!storeContext) {
-      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
-    }
-
+    storeContext = await getRouteStoreContext()
     const summary = await getDashboardServiceOrdersSummary(storeContext.storeId)
 
     return NextResponse.json({
-      data: {
-        open: summary.open,
-        waiting_approval: summary.waitingApproval,
-        in_progress: summary.inProgress,
-        ready: summary.ready,
-      },
+      open: summary.open,
+      waiting_approval: summary.waitingApproval,
+      in_progress: summary.inProgress,
+      ready_for_delivery: summary.readyForDelivery,
+      total: summary.total,
     })
   } catch (error) {
-    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 })
+    console.error("dashboard/service-orders-summary error", {
+      route: "/api/dashboard/service-orders-summary",
+      userId: storeContext?.userId ?? null,
+      storeId: storeContext?.storeId ?? null,
+      error: getRouteErrorDetails(error),
+    })
+
+    return NextResponse.json(
+      { error: getRouteErrorMessage(error) },
+      { status: getRouteErrorStatus(error) }
+    )
   }
 }

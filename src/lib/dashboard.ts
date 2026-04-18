@@ -7,10 +7,10 @@ export type DashboardCashStatus = {
 
 export type DashboardTodaySnapshot = {
   totalValueCents: number
-  count: number
+  totalCount: number
   averageTicketCents: number
   cancelledCount: number
-  cashStatus: DashboardCashStatus
+  cashSessionOpen: boolean
 }
 
 export type DashboardSalesByHourPoint = {
@@ -22,6 +22,7 @@ export type DashboardSalesByHourPoint = {
 export type DashboardTopProduct = {
   productId: string
   name: string
+  internalCode: string
   quantitySold: number
   totalValueCents: number
 }
@@ -38,7 +39,14 @@ export type DashboardServiceOrdersSummary = {
   open: number
   waitingApproval: number
   inProgress: number
-  ready: number
+  readyForDelivery: number
+  total: number
+}
+
+export type DashboardSalesLast7DaysPoint = {
+  date: string
+  valueCents: number
+  count: number
 }
 
 export function formatDashboardHour(hour: number) {

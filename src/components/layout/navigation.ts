@@ -31,6 +31,8 @@ export type NavigationItem = {
   label: string
   description: string
   icon: LucideIcon
+  liveIndicator?: boolean
+  liveTooltip?: string
 }
 
 export type NavigationGroup = {
@@ -47,6 +49,8 @@ export const navigationGroups: NavigationGroup[] = [
         label: "Dashboard",
         description: "Visão geral da operação da loja.",
         icon: LayoutDashboard,
+        liveIndicator: true,
+        liveTooltip: "Atualiza automaticamente a cada minuto",
       },
       {
         href: "/pdv",

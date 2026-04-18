@@ -70,6 +70,26 @@ function SidebarLink({
   const isActive = isNavigationItemActive(item, pathname)
   const Icon = item.icon
 
+  const liveIndicator = item.liveIndicator ? (
+    isCollapsed ? (
+      <span className="absolute -right-0.5 -top-0.5 flex size-2.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#F97316] opacity-75" />
+        <span className="relative inline-flex size-2.5 rounded-full bg-[#F97316]" />
+      </span>
+    ) : (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="relative inline-flex size-2.5 shrink-0 rounded-full bg-[#F97316]">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#F97316] opacity-75" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {item.liveTooltip ?? "Atualiza automaticamente a cada minuto"}
+        </TooltipContent>
+      </Tooltip>
+    )
+  ) : null
+
   const link = (
     <Link
       href={item.href}
@@ -82,9 +102,15 @@ function SidebarLink({
           : "text-[#9ca3af] hover:bg-white/5 hover:text-white"
       )}
     >
-      <Icon className="size-5 shrink-0" />
+      <span className="relative flex shrink-0 items-center justify-center">
+        <Icon className="size-5 shrink-0" />
+        {isCollapsed ? liveIndicator : null}
+      </span>
       {!isCollapsed ? (
-        <span className="truncate text-sm font-medium">{item.label}</span>
+        <>
+          <span className="truncate text-sm font-medium">{item.label}</span>
+          {liveIndicator}
+        </>
       ) : null}
     </Link>
   )
@@ -96,7 +122,18 @@ function SidebarLink({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
-      <TooltipContent side="right">{item.label}</TooltipContent>
+      <TooltipContent side="right">
+        {item.liveIndicator ? (
+          <div className="space-y-1">
+            <p>{item.label}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {item.liveTooltip ?? "Atualiza automaticamente a cada minuto"}
+            </p>
+          </div>
+        ) : (
+          item.label
+        )}
+      </TooltipContent>
     </Tooltip>
   )
 }
