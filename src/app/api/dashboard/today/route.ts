@@ -1,23 +1,21 @@
 import { NextResponse } from "next/server"
 
 import { getDashboardTodaySnapshot } from "@/lib/dashboard-server"
-import { getCurrentStoreContext } from "@/lib/products-server"
+import {
+  getRouteErrorDetails,
+  getRouteErrorMessage,
+  getRouteErrorStatus,
+  getRouteStoreContext,
+  type RouteStoreContext,
+} from "@/lib/route-store-context"
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Não foi possível carregar o resumo do dashboard."
-}
+export const dynamic = "force-dynamic"
 
 export async function GET() {
-  try {
-    const storeContext = await getCurrentStoreContext()
+  let storeContext: RouteStoreContext | null = null
 
-    if (!storeContext) {
-      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
-    }
+  try {
+    storeContext = await getRouteStoreContext()
 
     const snapshot = await getDashboardTodaySnapshot(
       storeContext.storeId,
@@ -39,6 +37,16 @@ export async function GET() {
       },
     })
   } catch (error) {
-    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 })
+    console.error("dashboard/today error", {
+      route: "/api/dashboard/today",
+      userId: storeContext?.userId ?? null,
+      storeId: storeContext?.storeId ?? null,
+      error: getRouteErrorDetails(error),
+    })
+
+    return NextResponse.json(
+      { error: getRouteErrorMessage(error) },
+      { status: getRouteErrorStatus(error) }
+    )
   }
 }

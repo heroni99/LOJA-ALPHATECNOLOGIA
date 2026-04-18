@@ -97,28 +97,45 @@ export async function getDashboardTodaySnapshot(
 ): Promise<DashboardTodaySnapshot> {
   const store = await getStoreSnapshot(storeId)
   const timeZone = store.timezone
+
+  const cashPayloadPromise = getCurrentCashSessionWithSummary(storeId, userId)
+    .then((payload) => payload)
+    .catch((error) => {
+      console.error("dashboard/today cash status error:", error)
+
+      return null
+    })
+
   const [sales, cancelledCount, cashPayload] = await Promise.all([
     listCompletedSalesToday(storeId, timeZone),
     countCancelledSalesToday(storeId, timeZone),
-    getCurrentCashSessionWithSummary(storeId, userId),
+    cashPayloadPromise,
   ])
   const totalValueCents = sales.reduce(
     (total, sale) => total + parseDbMoneyToCents(sale.total),
     0
   )
   const count = sales.length
+  const cashStatus = cashPayload
+    ? {
+        open: cashPayload.session.status === "OPEN",
+        terminalName: cashPayload.session.terminalName,
+        operatorName: cashPayload.session.operatorName,
+        openedAt: cashPayload.session.openedAt,
+      }
+    : {
+        open: false,
+        terminalName: null,
+        operatorName: null,
+        openedAt: null,
+      }
 
   return {
     totalValueCents,
     count,
     averageTicketCents: count > 0 ? Math.round(totalValueCents / count) : 0,
     cancelledCount,
-    cashStatus: {
-      open: cashPayload.session.status === "OPEN",
-      terminalName: cashPayload.session.terminalName,
-      operatorName: cashPayload.session.operatorName,
-      openedAt: cashPayload.session.openedAt,
-    },
+    cashStatus,
   }
 }
 

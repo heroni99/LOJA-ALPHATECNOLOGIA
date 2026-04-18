@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const SUPPLIERS_PAGE_SIZE = 10
+export const SUPPLIERS_PAGE_SIZE = 20
 
 type SearchParamsLike = Record<string, string | string[] | undefined>
 

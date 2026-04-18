@@ -178,12 +178,13 @@ export default async function CustomerDetailPage({
         actions={
           <>
             <DeactivateRecordButton
-              endpoint={`/api/customers/${customer.id}`}
+              endpoint={`/api/customers/${customer.id}/deactivate`}
               redirectHref="/customers"
               confirmMessage={`Deseja inativar o cliente ${customer.name}?`}
               successMessage="Cliente inativado com sucesso."
               errorMessage="Não foi possível inativar o cliente."
               label="Inativar"
+              method="PATCH"
             />
             <Button asChild>
               <Link href={`/customers/${customer.id}/edit`}>

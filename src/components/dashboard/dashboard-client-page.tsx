@@ -187,6 +187,11 @@ export function DashboardClientPage() {
   const cashBadgeClasses = today?.cash_status.open
     ? "border-emerald-200 bg-emerald-50 text-emerald-700"
     : "border-zinc-200 bg-zinc-100 text-zinc-700"
+  const cashStatusDescription = today
+    ? today.cash_status.terminal_name
+      ? `Terminal: ${today.cash_status.terminal_name}`
+      : "Sessão de caixa indisponível ou sem terminal ativo configurado."
+    : "Carregando sessão atual."
 
   return (
     <div className="flex flex-col gap-6">
@@ -233,11 +238,7 @@ export function DashboardClientPage() {
               "--"
             )
           }
-          description={
-            today
-              ? `Terminal: ${today.cash_status.terminal_name ?? "Caixa Principal"}`
-              : "Carregando sessão atual."
-          }
+          description={cashStatusDescription}
           icon={<Boxes className="size-5" />}
           variant="warning"
         />

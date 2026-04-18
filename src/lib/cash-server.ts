@@ -255,6 +255,50 @@ async function listStoreCashTerminals(storeId: string) {
   return (data ?? []) as CashTerminalRecord[]
 }
 
+async function ensureStoreActiveCashTerminal(storeId: string) {
+  const terminals = await listStoreCashTerminals(storeId)
+  const activeTerminal = terminals.find((terminal) => terminal.active)
+
+  if (activeTerminal) {
+    return activeTerminal
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const fallbackTerminal = terminals[0]
+
+  if (fallbackTerminal) {
+    const { data, error } = await supabase
+      .from("cash_terminals")
+      .update({ active: true })
+      .eq("store_id", storeId)
+      .eq("id", fallbackTerminal.id)
+      .select("id, name, active, created_at")
+      .single()
+
+    if (error) {
+      throw error
+    }
+
+    return data as CashTerminalRecord
+  }
+
+  const { data, error } = await supabase
+    .from("cash_terminals")
+    .insert({
+      store_id: storeId,
+      name: "Caixa Principal",
+      active: true,
+    })
+    .select("id, name, active, created_at")
+    .single()
+
+  if (error) {
+    throw error
+  }
+
+  return data as CashTerminalRecord
+}
+
 async function getProfileName(profileId: string | null) {
   if (!profileId) {
     return "Sistema"
@@ -402,12 +446,7 @@ async function getCurrentCashSessionPayload(
 }
 
 async function createAutomaticCashSession(storeId: string) {
-  const terminals = await listStoreCashTerminals(storeId)
-  const terminal = terminals.find((item) => item.active)
-
-  if (!terminal) {
-    throw new Error("Nenhum terminal de caixa encontrado.")
-  }
+  const terminal = await ensureStoreActiveCashTerminal(storeId)
 
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
@@ -492,6 +531,22 @@ export async function getOrCreateCurrentCashSession(storeId: string, _userId: st
 
 export async function getCurrentCashSessionWithSummary(storeId: string, userId: string) {
   return getCurrentCashSessionPayload(storeId, userId)
+}
+
+export async function getOpenCashSessionWithSummary(storeId: string) {
+  const session = await getCurrentOpenCashSession(storeId)
+
+  if (!session) {
+    return null
+  }
+
+  const movementTotals = await getCashMovementTotalsBySession(session.id)
+  const summary = buildMovementSummary(session, movementTotals)
+
+  return {
+    session: applySummaryToSession(session, summary),
+    summary: toCashSummary(session.id, summary),
+  }
 }
 
 export async function getCurrentCashSummary(storeId: string, userId: string) {

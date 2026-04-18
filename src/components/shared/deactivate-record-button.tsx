@@ -16,6 +16,7 @@ type DeactivateRecordButtonProps = {
   successMessage: string
   errorMessage: string
   label: string
+  method?: "DELETE" | "PATCH"
 }
 
 export function DeactivateRecordButton({
@@ -25,6 +26,7 @@ export function DeactivateRecordButton({
   successMessage,
   errorMessage,
   label,
+  method = "DELETE",
 }: DeactivateRecordButtonProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -33,7 +35,7 @@ export function DeactivateRecordButton({
     try {
       setIsSubmitting(true)
 
-      const response = await fetch(endpoint, { method: "DELETE" })
+      const response = await fetch(endpoint, { method })
       const responseData = await response.json().catch(() => null)
 
       if (!response.ok) {

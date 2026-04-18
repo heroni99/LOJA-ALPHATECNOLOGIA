@@ -1,57 +1,36 @@
 import { NextResponse } from "next/server"
 
-import { getCurrentCashSessionWithSummary } from "@/lib/cash-server"
-import { createClient, getCurrentUser } from "@/lib/supabase/server"
+import {
+  getCurrentCashSessionWithSummary,
+  getOpenCashSessionWithSummary,
+} from "@/lib/cash-server"
+import {
+  getRouteErrorDetails,
+  getRouteErrorMessage,
+  getRouteErrorStatus,
+  getRouteStoreContext,
+  type RouteStoreContext,
+} from "@/lib/route-store-context"
+
+export const dynamic = "force-dynamic"
 
 export async function GET() {
+  let storeContext: RouteStoreContext | null = null
+
   try {
-    const user = await getCurrentUser()
+    storeContext = await getRouteStoreContext()
+    const currentSession = await getOpenCashSessionWithSummary(storeContext.storeId)
 
-    if (!user) {
-      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
-    }
-
-    const supabase = await createClient({ serviceRole: true })
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("store_id")
-      .eq("id", user.id)
-      .maybeSingle()
-
-    if (profileError) {
-      throw profileError
-    }
-
-    if (!profile?.store_id) {
-      return NextResponse.json(
-        { error: "Perfil sem store_id" },
-        { status: 400 }
-      )
-    }
-
-    const { data: terminal, error: terminalError } = await supabase
-      .from("cash_terminals")
-      .select("id")
-      .eq("store_id", profile.store_id)
-      .eq("active", true)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle()
-
-    if (terminalError) {
-      throw terminalError
-    }
-
-    if (!terminal) {
-      return NextResponse.json(
-        { error: "Nenhum terminal de caixa encontrado" },
-        { status: 404 }
-      )
+    if (currentSession) {
+      return NextResponse.json({
+        data: currentSession.session,
+        summary: currentSession.summary,
+      })
     }
 
     const { session, summary } = await getCurrentCashSessionWithSummary(
-      profile.store_id,
-      user.id
+      storeContext.storeId,
+      storeContext.userId
     )
 
     return NextResponse.json({
@@ -59,11 +38,16 @@ export async function GET() {
       summary,
     })
   } catch (error) {
-    console.error("cash/current-session error:", error)
+    console.error("cash/current-session error", {
+      route: "/api/cash/current-session",
+      userId: storeContext?.userId ?? null,
+      storeId: storeContext?.storeId ?? null,
+      error: getRouteErrorDetails(error),
+    })
 
     return NextResponse.json(
-      { error: "Erro ao buscar sessão", details: String(error) },
-      { status: 500 }
+      { error: getRouteErrorMessage(error) },
+      { status: getRouteErrorStatus(error) }
     )
   }
 }

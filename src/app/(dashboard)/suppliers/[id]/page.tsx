@@ -171,12 +171,13 @@ export default async function SupplierDetailPage({
         actions={
           <>
             <DeactivateRecordButton
-              endpoint={`/api/suppliers/${supplier.id}`}
+              endpoint={`/api/suppliers/${supplier.id}/deactivate`}
               redirectHref="/suppliers"
               confirmMessage={`Deseja inativar o fornecedor ${supplier.name}?`}
               successMessage="Fornecedor inativado com sucesso."
               errorMessage="Não foi possível inativar o fornecedor."
               label="Inativar"
+              method="PATCH"
             />
             <Button asChild>
               <Link href={`/suppliers/${supplier.id}/edit`}>
