@@ -194,3 +194,26 @@ export async function removeStorageObject(bucket: string, path: string) {
     )
   }
 }
+
+export async function createSignedStorageUrl(
+  bucket: string,
+  path: string,
+  expiresInSeconds: number
+) {
+  if (!path) {
+    throw new Error("Arquivo não encontrado no Storage.")
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(path, expiresInSeconds)
+
+  if (error || !data?.signedUrl) {
+    throw new Error(
+      getStorageErrorMessage(error, "Não foi possível assinar o arquivo no Storage.")
+    )
+  }
+
+  return data.signedUrl
+}

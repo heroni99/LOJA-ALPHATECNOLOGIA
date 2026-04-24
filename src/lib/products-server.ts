@@ -2,15 +2,18 @@ import "server-only"
 
 import { getCurrentUser, createClient } from "@/lib/supabase/server"
 import {
+  type ProductAttachment,
   type ProductCode,
   type ProductDetail,
   type ProductFormOption,
   type ProductListFilters,
   type ProductMovement,
   type ProductMutationInput,
+  type ProductAttachmentType,
   type ProductQuickSearchResult,
   type ProductStockBalance,
   type ProductSummary,
+  productAttachmentTypeSchema,
   parseDbMoneyToCents,
 } from "@/lib/products"
 
@@ -100,6 +103,19 @@ type QuickSearchProductRecord = {
   stock_balances?: { quantity: number | string | null }[] | null
 }
 
+type ProductAttachmentRecord = {
+  id: string
+  product_id: string
+  file_name: string
+  file_url: string
+  file_type: string | null
+  file_size_kb: number | null
+  description: string | null
+  attachment_type: ProductAttachmentType
+  uploaded_by: string | null
+  created_at: string
+}
+
 type ProductFullDetail = {
   product: ProductDetail
   codes: ProductCode[]
@@ -127,6 +143,12 @@ function parseQuantity(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0)
 
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeOptionalText(value: string | null | undefined) {
+  const normalized = value?.trim() ?? ""
+
+  return normalized.length > 0 ? normalized : null
 }
 
 function sumStockBalances(
@@ -212,6 +234,19 @@ function mapProductCode(record: ProductCodeRecord): ProductCode {
     codeType: record.code_type,
     scope: record.scope,
     isPrimary: record.is_primary,
+    createdAt: record.created_at,
+  }
+}
+
+function mapProductAttachment(record: ProductAttachmentRecord): ProductAttachment {
+  return {
+    id: record.id,
+    fileName: record.file_name,
+    fileUrl: record.file_url,
+    fileType: record.file_type,
+    fileSizeKb: record.file_size_kb,
+    description: record.description,
+    attachmentType: productAttachmentTypeSchema.parse(record.attachment_type),
     createdAt: record.created_at,
   }
 }
@@ -387,6 +422,22 @@ export async function getProductById(productId: string, storeId: string) {
   return mapProductDetail(data as ProductRecord)
 }
 
+async function productExistsInStore(productId: string, storeId: string) {
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("products")
+    .select("id")
+    .eq("store_id", storeId)
+    .eq("id", productId)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return Boolean(data)
+}
+
 export async function getProductCodes(productId: string): Promise<ProductCode[]> {
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
@@ -485,6 +536,133 @@ export async function getProductFullDetail(
     stockBalances: product.isService ? [] : stockBalances,
     recentMovements: product.isService ? [] : recentMovements,
   }
+}
+
+export async function listProductAttachments(
+  productId: string,
+  storeId: string
+): Promise<ProductAttachment[] | null> {
+  const exists = await productExistsInStore(productId, storeId)
+
+  if (!exists) {
+    return null
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("product_attachments")
+    .select(
+      "id, product_id, file_name, file_url, file_type, file_size_kb, description, attachment_type, uploaded_by, created_at"
+    )
+    .eq("product_id", productId)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    throw error
+  }
+
+  return ((data ?? []) as ProductAttachmentRecord[]).map(mapProductAttachment)
+}
+
+export async function createProductAttachment(
+  productId: string,
+  storeId: string,
+  userId: string,
+  input: {
+    fileName: string
+    fileUrl: string
+    fileType: string | null
+    fileSizeKb: number | null
+    description?: string | null
+    attachmentType?: ProductAttachmentType | null
+  }
+): Promise<ProductAttachment | null> {
+  const exists = await productExistsInStore(productId, storeId)
+
+  if (!exists) {
+    return null
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("product_attachments")
+    .insert({
+      product_id: productId,
+      file_name: input.fileName,
+      file_url: input.fileUrl,
+      file_type: input.fileType,
+      file_size_kb: input.fileSizeKb,
+      description: normalizeOptionalText(input.description),
+      attachment_type: input.attachmentType ?? "INVOICE",
+      uploaded_by: userId,
+    })
+    .select(
+      "id, product_id, file_name, file_url, file_type, file_size_kb, description, attachment_type, uploaded_by, created_at"
+    )
+    .single()
+
+  if (error) {
+    throw error
+  }
+
+  return mapProductAttachment(data as ProductAttachmentRecord)
+}
+
+export async function getProductAttachmentById(
+  productId: string,
+  attachmentId: string,
+  storeId: string
+): Promise<ProductAttachment | null> {
+  const exists = await productExistsInStore(productId, storeId)
+
+  if (!exists) {
+    return null
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { data, error } = await supabase
+    .from("product_attachments")
+    .select(
+      "id, product_id, file_name, file_url, file_type, file_size_kb, description, attachment_type, uploaded_by, created_at"
+    )
+    .eq("product_id", productId)
+    .eq("id", attachmentId)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  if (!data) {
+    return null
+  }
+
+  return mapProductAttachment(data as ProductAttachmentRecord)
+}
+
+export async function deleteProductAttachment(
+  productId: string,
+  attachmentId: string,
+  storeId: string
+): Promise<ProductAttachment | null> {
+  const attachment = await getProductAttachmentById(productId, attachmentId, storeId)
+
+  if (!attachment) {
+    return null
+  }
+
+  const supabase = await createClient({ serviceRole: true })
+  const { error } = await supabase
+    .from("product_attachments")
+    .delete()
+    .eq("product_id", productId)
+    .eq("id", attachmentId)
+
+  if (error) {
+    throw error
+  }
+
+  return attachment
 }
 
 export async function createProduct(

@@ -4,6 +4,7 @@ import { toast as sonnerToast } from "sonner"
 
 const SUCCESS_DURATION_MS = 3_000
 const ERROR_DURATION_MS = 5_000
+const WARNING_DURATION_MS = 4_000
 
 function success(message: string) {
   return sonnerToast.success(message, {
@@ -14,6 +15,12 @@ function success(message: string) {
 function error(message: string) {
   return sonnerToast.error(message, {
     duration: ERROR_DURATION_MS,
+  })
+}
+
+function warning(message: string) {
+  return sonnerToast.warning(message, {
+    duration: WARNING_DURATION_MS,
   })
 }
 
@@ -28,8 +35,9 @@ function dismiss(id?: string | number) {
 export const toast = {
   success,
   error,
+  warning,
   loading,
   dismiss,
 }
 
-export { success, error, loading, dismiss }
+export { success, error, warning, loading, dismiss }

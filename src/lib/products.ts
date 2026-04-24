@@ -144,6 +144,26 @@ export type ProductDetail = {
   updatedAt: string
 }
 
+export const productAttachmentTypeSchema = z.enum([
+  "INVOICE",
+  "WARRANTY",
+  "MANUAL",
+  "OTHER",
+])
+
+export type ProductAttachmentType = z.infer<typeof productAttachmentTypeSchema>
+
+export type ProductAttachment = {
+  id: string
+  fileName: string
+  fileUrl: string
+  fileType: string | null
+  fileSizeKb: number | null
+  description: string | null
+  attachmentType: ProductAttachmentType
+  createdAt: string
+}
+
 export type ProductStockBalance = {
   id: string
   locationId: string
@@ -404,6 +424,17 @@ export function getStockMovementLabel(movementType: string) {
   }
 
   return labels[movementType] ?? movementType
+}
+
+export function getProductAttachmentTypeLabel(type: ProductAttachmentType) {
+  const labels: Record<ProductAttachmentType, string> = {
+    INVOICE: "Nota fiscal de compra",
+    WARRANTY: "Garantia",
+    MANUAL: "Manual",
+    OTHER: "Outro",
+  }
+
+  return labels[type]
 }
 
 export function formatDateTime(value: string) {

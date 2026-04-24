@@ -3,11 +3,11 @@ import {
   ArrowRightLeft,
   BadgeDollarSign,
   Package,
-  Printer,
   UserRound,
 } from "lucide-react"
 import { notFound } from "next/navigation"
 
+import { SaleFiscalCard } from "@/components/fiscal/sale-fiscal-card"
 import { SaleReturnDialog } from "@/components/sales/sale-return-dialog"
 import { SaleStatusBadge } from "@/components/sales/sale-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
@@ -17,6 +17,7 @@ import { SectionCard } from "@/components/shared/section-card"
 import { StatCard } from "@/components/shared/stat-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { getFiscalDocumentBySaleId } from "@/lib/fiscal-server"
 import {
   formatFinancialMoney,
   getFinancialPaymentMethodLabel,
@@ -162,7 +163,10 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
     notFound()
   }
 
-  const sale = await getSaleFullDetail(params.id, storeContext.storeId)
+  const [sale, fiscalDocument] = await Promise.all([
+    getSaleFullDetail(params.id, storeContext.storeId),
+    getFiscalDocumentBySaleId(params.id, storeContext.storeId),
+  ])
 
   if (!sale) {
     notFound()
@@ -204,12 +208,6 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
               items={sale.items}
               disabled={!canReturn}
             />
-            <Button variant="outline" asChild>
-              <Link href={`/api/sales/${sale.id}/receipt`} target="_blank">
-                <Printer />
-                Imprimir comprovante
-              </Link>
-            </Button>
           </>
         }
       />
@@ -300,6 +298,13 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
           )}
         </SectionCard>
       </div>
+
+      <SectionCard
+        title="Comprovante fiscal"
+        description="Gere, acompanhe o status e imprima o comprovante interno REC desta venda."
+      >
+        <SaleFiscalCard saleId={sale.id} fiscalDocument={fiscalDocument} />
+      </SectionCard>
 
       <SectionCard
         title="Itens vendidos"

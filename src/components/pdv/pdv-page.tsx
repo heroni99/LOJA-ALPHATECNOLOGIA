@@ -9,6 +9,7 @@ import {
   Loader2,
   Minus,
   Plus,
+  Printer,
   QrCode,
   Search,
   ShoppingCart,
@@ -76,6 +77,20 @@ type CashSessionApiResponse = {
 type CheckoutApiResponse = {
   data?: PdvCompletedSaleDto
   error?: string
+}
+
+type FiscalGenerateApiResponse = {
+  data?: {
+    id: string
+    receiptNumber: string
+    status: "ISSUED" | "CANCELLED"
+  }
+  error?: string
+}
+
+type GeneratedFiscalReceipt = {
+  id: string
+  receiptNumber: string
 }
 
 function getPaymentMethodIcon(method: PdvPaymentLine["method"]) {
@@ -166,7 +181,11 @@ export function PdvPage() {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false)
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false)
   const [completedSale, setCompletedSale] = useState<PdvCompletedSale | null>(null)
+  const [generatedFiscalReceipt, setGeneratedFiscalReceipt] =
+    useState<GeneratedFiscalReceipt | null>(null)
+  const [isGeneratingFiscalReceipt, setIsGeneratingFiscalReceipt] = useState(false)
   const [recentlyAddedKey, setRecentlyAddedKey] = useState<string | null>(null)
+  const completedSaleId = completedSale?.id ?? null
 
   cartItemsRef.current = cartItems
 
@@ -249,6 +268,72 @@ export function PdvPage() {
 
     return () => window.removeEventListener("keydown", handleKeyboardShortcut)
   }, [])
+
+  useEffect(() => {
+    if (!completedSaleId) {
+      setGeneratedFiscalReceipt(null)
+      setIsGeneratingFiscalReceipt(false)
+      return
+    }
+
+    const controller = new AbortController()
+    let isActive = true
+
+    setGeneratedFiscalReceipt(null)
+    setIsGeneratingFiscalReceipt(true)
+
+    fetch("/api/fiscal/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ sale_id: completedSaleId }),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const responseData = (await response.json()) as FiscalGenerateApiResponse
+
+        if (!response.ok || !responseData.data) {
+          throw createApiError(
+            response.status,
+            responseData.error ?? "Não foi possível gerar o comprovante."
+          )
+        }
+
+        if (isActive) {
+          setGeneratedFiscalReceipt({
+            id: responseData.data.id,
+            receiptNumber: responseData.data.receiptNumber,
+          })
+        }
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return
+        }
+
+        if (isActive) {
+          toast.warning(
+            "Venda concluída, mas o comprovante interno não pôde ser gerado agora."
+          )
+        }
+
+        if (shouldRedirectToLogin(error)) {
+          router.replace("/login")
+          router.refresh()
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsGeneratingFiscalReceipt(false)
+        }
+      })
+
+    return () => {
+      isActive = false
+      controller.abort()
+    }
+  }, [completedSaleId, router])
 
   useEffect(() => {
     const query = search.trim()
@@ -446,6 +531,8 @@ export function PdvPage() {
 
   function startNewSale() {
     setCompletedSale(null)
+    setGeneratedFiscalReceipt(null)
+    setIsGeneratingFiscalReceipt(false)
     setIsConfirmOpen(false)
     setCartItems([])
     setSelectedCustomer(null)
@@ -1052,6 +1139,25 @@ export function PdvPage() {
                   </div>
                 ) : null}
               </div>
+
+              <div className="space-y-2 rounded-3xl border border-border/70 bg-background p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Comprovante</span>
+                  {generatedFiscalReceipt ? (
+                    <strong>{generatedFiscalReceipt.receiptNumber}</strong>
+                  ) : isGeneratingFiscalReceipt ? (
+                    <span className="inline-flex items-center gap-2 font-medium text-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Gerando...
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Indisponível</span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  O comprovante fiscal interno é gerado em segundo plano após o checkout.
+                </p>
+              </div>
             </div>
           ) : null}
 
@@ -1059,19 +1165,20 @@ export function PdvPage() {
             <Button
               type="button"
               variant="outline"
-              disabled={!completedSale}
+              disabled={!generatedFiscalReceipt}
               onClick={() => {
-                if (!completedSale) {
+                if (!generatedFiscalReceipt) {
                   return
                 }
 
                 window.open(
-                  `/api/sales/${completedSale.id}/receipt`,
+                  `/api/fiscal/${generatedFiscalReceipt.id}/receipt`,
                   "_blank",
                   "noopener,noreferrer"
                 )
               }}
             >
+              {isGeneratingFiscalReceipt ? <Loader2 className="animate-spin" /> : <Printer />}
               Imprimir comprovante
             </Button>
             <Button type="button" onClick={startNewSale}>

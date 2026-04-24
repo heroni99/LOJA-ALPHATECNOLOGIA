@@ -519,6 +519,22 @@ create table if not exists public.sale_payments (
   constraint sale_payments_installments_check check (installments > 0)
 );
 
+create table if not exists public.fiscal_documents (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete restrict,
+  sale_id uuid not null references public.sales(id) on delete restrict,
+  receipt_number text not null unique,
+  status text not null default 'ISSUED',
+  html_content text,
+  cancelled_at timestamptz,
+  cancel_reason text,
+  cancelled_by uuid references public.profiles(id) on delete set null,
+  issued_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  constraint fiscal_documents_sale_id_key unique (sale_id),
+  constraint fiscal_documents_status_check check (status in ('ISSUED', 'CANCELLED'))
+);
+
 create table if not exists public.service_orders (
   id uuid primary key default gen_random_uuid(),
   store_id uuid not null references public.stores(id) on delete restrict,
@@ -586,6 +602,25 @@ create table if not exists public.service_order_attachments (
   size_bytes bigint not null,
   created_at timestamptz not null default now(),
   constraint service_order_attachments_size_bytes_check check (size_bytes > 0)
+);
+
+create table if not exists public.product_attachments (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  file_name text not null,
+  file_url text not null,
+  file_type text,
+  file_size_kb integer,
+  description text,
+  attachment_type text not null default 'INVOICE',
+  uploaded_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint product_attachments_file_size_kb_check check (
+    file_size_kb is null or file_size_kb > 0
+  ),
+  constraint product_attachments_type_check check (
+    attachment_type in ('INVOICE', 'WARRANTY', 'MANUAL', 'OTHER')
+  )
 );
 
 create table if not exists public.purchase_orders (
@@ -822,6 +857,12 @@ create index if not exists idx_sales_created_at on public.sales(created_at desc)
 create index if not exists idx_sale_items_sale_id on public.sale_items(sale_id);
 create index if not exists idx_sale_items_product_id on public.sale_items(product_id);
 create index if not exists idx_sale_payments_sale_id on public.sale_payments(sale_id);
+create index if not exists idx_fiscal_documents_store_status
+  on public.fiscal_documents(store_id, status);
+create index if not exists idx_fiscal_documents_issued_at
+  on public.fiscal_documents(issued_at desc);
+create index if not exists idx_fiscal_documents_cancelled_at
+  on public.fiscal_documents(cancelled_at desc);
 
 create index if not exists idx_service_orders_store_status on public.service_orders(store_id, status);
 create index if not exists idx_service_orders_customer_id on public.service_orders(customer_id);
@@ -835,6 +876,10 @@ create index if not exists idx_service_order_history_created_at on public.servic
 create index if not exists idx_service_order_attachments_service_order_id on public.service_order_attachments(service_order_id);
 create index if not exists idx_service_order_attachments_created_at on public.service_order_attachments(created_at desc);
 create unique index if not exists idx_service_order_attachments_file_path on public.service_order_attachments(file_path);
+create index if not exists idx_product_attachments_product_id
+  on public.product_attachments(product_id);
+create index if not exists idx_product_attachments_created_at
+  on public.product_attachments(created_at desc);
 
 create index if not exists idx_purchase_orders_store_status on public.purchase_orders(store_id, status);
 create index if not exists idx_purchase_orders_supplier_id on public.purchase_orders(supplier_id);
@@ -1193,10 +1238,12 @@ alter table public.cash_movements enable row level security;
 alter table public.sales enable row level security;
 alter table public.sale_items enable row level security;
 alter table public.sale_payments enable row level security;
+alter table public.fiscal_documents enable row level security;
 alter table public.service_orders enable row level security;
 alter table public.service_order_items enable row level security;
 alter table public.service_order_status_history enable row level security;
 alter table public.service_order_attachments enable row level security;
+alter table public.product_attachments enable row level security;
 alter table public.purchase_orders enable row level security;
 alter table public.purchase_order_items enable row level security;
 alter table public.sale_returns enable row level security;
@@ -1381,6 +1428,20 @@ to authenticated
 using (public.sale_in_current_store(sale_id))
 with check (public.sale_in_current_store(sale_id));
 
+drop policy if exists fiscal_documents_tenant_policy on public.fiscal_documents;
+create policy fiscal_documents_tenant_policy
+on public.fiscal_documents
+for all
+to authenticated
+using (
+  public.same_store(store_id)
+  and public.sale_in_current_store(sale_id)
+)
+with check (
+  public.same_store(store_id)
+  and public.sale_in_current_store(sale_id)
+);
+
 drop policy if exists service_orders_tenant_policy on public.service_orders;
 create policy service_orders_tenant_policy
 on public.service_orders
@@ -1412,6 +1473,14 @@ for all
 to authenticated
 using (public.service_order_in_current_store(service_order_id))
 with check (public.service_order_in_current_store(service_order_id));
+
+drop policy if exists product_attachments_tenant_policy on public.product_attachments;
+create policy product_attachments_tenant_policy
+on public.product_attachments
+for all
+to authenticated
+using (public.product_in_current_store(product_id))
+with check (public.product_in_current_store(product_id));
 
 drop policy if exists purchase_orders_tenant_policy on public.purchase_orders;
 create policy purchase_orders_tenant_policy

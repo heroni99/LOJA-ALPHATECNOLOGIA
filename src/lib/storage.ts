@@ -1,5 +1,6 @@
 export const PRODUCT_IMAGES_BUCKET = "product-images"
 export const SERVICE_ORDER_ATTACHMENTS_BUCKET = "service-order-attachments"
+export const PRODUCT_ATTACHMENTS_BUCKET = "product-attachments"
 
 export const PRODUCT_IMAGE_ACCEPTED_TYPES = [
   "image/jpeg",
@@ -12,8 +13,15 @@ export const SERVICE_ORDER_ATTACHMENT_ACCEPTED_TYPES = [
   "application/pdf",
 ] as const
 
+export const PRODUCT_ATTACHMENT_ACCEPTED_TYPES = [
+  ...PRODUCT_IMAGE_ACCEPTED_TYPES,
+  "application/pdf",
+] as const
+
 export const PRODUCT_IMAGE_MAX_SIZE_BYTES = 5 * 1024 * 1024
 export const SERVICE_ORDER_ATTACHMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
+export const PRODUCT_ATTACHMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
+export const PRODUCT_ATTACHMENT_SIGNED_URL_TTL_SECONDS = 60 * 60
 
 export function sanitizeStorageFilename(fileName: string) {
   const normalized = fileName

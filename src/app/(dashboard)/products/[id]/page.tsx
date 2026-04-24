@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 import { notFound } from "next/navigation"
 
+import { ProductAttachmentsPanel } from "@/components/products/product-attachments-panel"
 import { ProductStatusBadge } from "@/components/products/product-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -30,7 +31,13 @@ import {
 import {
   getCurrentStoreContext,
   getProductFullDetail,
+  listProductAttachments,
 } from "@/lib/products-server"
+import {
+  PRODUCT_ATTACHMENTS_BUCKET,
+  PRODUCT_ATTACHMENT_SIGNED_URL_TTL_SECONDS,
+} from "@/lib/storage"
+import { createSignedStorageUrl } from "@/lib/storage-server"
 
 type ProductDetailPageProps = {
   params: {
@@ -143,11 +150,29 @@ export default async function ProductDetailPage({
     notFound()
   }
 
-  const detail = await getProductFullDetail(params.id, storeContext.storeId)
+  const [detail, rawAttachments] = await Promise.all([
+    getProductFullDetail(params.id, storeContext.storeId),
+    listProductAttachments(params.id, storeContext.storeId),
+  ])
 
   if (!detail) {
     notFound()
   }
+
+  if (!rawAttachments) {
+    notFound()
+  }
+
+  const attachments = await Promise.all(
+    rawAttachments.map(async (attachment) => ({
+      ...attachment,
+      fileUrl: await createSignedStorageUrl(
+        PRODUCT_ATTACHMENTS_BUCKET,
+        attachment.fileUrl,
+        PRODUCT_ATTACHMENT_SIGNED_URL_TTL_SECONDS
+      ),
+    }))
+  )
 
   const { product, codes, stockBalances, recentMovements } = detail
   const stockVariant = product.isService
@@ -257,6 +282,7 @@ export default async function ProductDetailPage({
           <TabsTrigger value="stock">Estoque por local</TabsTrigger>
           <TabsTrigger value="codes">Códigos</TabsTrigger>
           <TabsTrigger value="movements">Movimentações</TabsTrigger>
+          <TabsTrigger value="attachments">Notas e documentos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="stock">
@@ -326,6 +352,18 @@ export default async function ProductDetailPage({
                   className="min-h-56 rounded-none border-0 bg-transparent"
                 />
               }
+            />
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="attachments">
+          <SectionCard
+            title="Notas e documentos"
+            description="Anexe notas de compra, garantia, manual e outros documentos do produto."
+          >
+            <ProductAttachmentsPanel
+              productId={product.id}
+              initialAttachments={attachments}
             />
           </SectionCard>
         </TabsContent>
