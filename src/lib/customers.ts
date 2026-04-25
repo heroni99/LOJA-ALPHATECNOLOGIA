@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { cleanCep, formatCep } from "@/lib/cep"
+
 export const CUSTOMERS_PAGE_SIZE = 20
 
 type SearchParamsLike = Record<string, string | string[] | undefined>
@@ -163,7 +165,7 @@ export function toCustomerMutationInput(
     phone2: normalizeOptionalString(parsed.phone2),
     email: normalizeOptionalString(parsed.email),
     cpf_cnpj: normalizeOptionalString(parsed.cpf_cnpj),
-    zip_code: normalizeOptionalString(parsed.zip_code),
+    zip_code: normalizeOptionalCep(parsed.zip_code),
     address: normalizeOptionalString(parsed.address),
     city: normalizeOptionalString(parsed.city),
     state: normalizeOptionalString(parsed.state),
@@ -194,7 +196,7 @@ export function toCustomerFormValues(
     phone2: customer.phone2 ?? "",
     email: customer.email ?? "",
     cpf_cnpj: customer.cpfCnpj ?? "",
-    zip_code: customer.zipCode ?? "",
+    zip_code: formatCep(customer.zipCode),
     address: customer.address ?? "",
     city: customer.city ?? "",
     state: customer.state ?? "",
@@ -205,6 +207,12 @@ export function toCustomerFormValues(
 
 function normalizeOptionalString(value: string | null | undefined) {
   const normalized = value?.trim() ?? ""
+
+  return normalized.length > 0 ? normalized : null
+}
+
+function normalizeOptionalCep(value: string | null | undefined) {
+  const normalized = cleanCep(value)
 
   return normalized.length > 0 ? normalized : null
 }

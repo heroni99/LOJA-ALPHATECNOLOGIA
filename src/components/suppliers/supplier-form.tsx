@@ -1,11 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { Save } from "lucide-react"
-import { type Control, useForm } from "react-hook-form"
+import { Loader2, Save } from "lucide-react"
+import { type Control, useForm, useWatch } from "react-hook-form"
 
 import { FormPage } from "@/components/shared/form-page"
 import { FormSection } from "@/components/shared/form-section"
@@ -24,6 +24,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
+import { cleanCep, fetchCep, formatCep } from "@/lib/cep"
 import { toast } from "@/lib/toast"
 import {
   defaultSupplierFormValues,
@@ -36,6 +37,10 @@ type SupplierFormProps = {
   mode: "create" | "edit"
   initialValues?: SupplierFormValues
   supplierId?: string
+}
+
+function isBlankValue(value: string | undefined) {
+  return (value ?? "").trim().length === 0
 }
 
 function ToggleField({
@@ -93,10 +98,89 @@ export function SupplierForm({
 }: SupplierFormProps) {
   const router = useRouter()
   const [isSaving, setIsSaving] = useState(false)
+  const [isCepLoading, setIsCepLoading] = useState(false)
+  const hasInitializedCepRef = useRef(false)
+  const lastFetchedCepRef = useRef<string | null>(null)
+  const cepRequestIdRef = useRef(0)
   const form = useForm<SupplierFormValues>({
     resolver: zodResolver(supplierFormSchema),
     defaultValues: initialValues,
   })
+  const zipCode = useWatch({
+    control: form.control,
+    name: "zip_code",
+  }) ?? ""
+
+  useEffect(() => {
+    const cleanedCep = cleanCep(zipCode)
+
+    if (!hasInitializedCepRef.current) {
+      hasInitializedCepRef.current = true
+      lastFetchedCepRef.current = cleanedCep.length === 8 ? cleanedCep : null
+      return
+    }
+
+    if (cleanedCep.length !== 8) {
+      cepRequestIdRef.current += 1
+      lastFetchedCepRef.current = null
+      setIsCepLoading(false)
+      return
+    }
+
+    if (cleanedCep === lastFetchedCepRef.current) {
+      return
+    }
+
+    let isActive = true
+    const requestId = cepRequestIdRef.current + 1
+
+    cepRequestIdRef.current = requestId
+    setIsCepLoading(true)
+
+    void (async () => {
+      const cepData = await fetchCep(cleanedCep)
+
+      if (!isActive || cepRequestIdRef.current !== requestId) {
+        return
+      }
+
+      setIsCepLoading(false)
+      lastFetchedCepRef.current = cleanedCep
+
+      if (!cepData) {
+        toast.error("CEP não encontrado")
+        return
+      }
+
+      if (isBlankValue(form.getValues("address")) && cepData.address) {
+        form.setValue("address", cepData.address, {
+          shouldDirty: true,
+          shouldTouch: true,
+          shouldValidate: true,
+        })
+      }
+
+      if (isBlankValue(form.getValues("city")) && cepData.city) {
+        form.setValue("city", cepData.city, {
+          shouldDirty: true,
+          shouldTouch: true,
+          shouldValidate: true,
+        })
+      }
+
+      if (isBlankValue(form.getValues("state")) && cepData.state) {
+        form.setValue("state", cepData.state, {
+          shouldDirty: true,
+          shouldTouch: true,
+          shouldValidate: true,
+        })
+      }
+    })()
+
+    return () => {
+      isActive = false
+    }
+  }, [form, zipCode])
 
   async function handleSubmit(values: SupplierFormValues) {
     try {
@@ -273,9 +357,23 @@ export function SupplierForm({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>CEP</FormLabel>
-                      <FormControl>
-                        <Input placeholder="00000-000" {...field} />
-                      </FormControl>
+                      <div className="relative">
+                        <FormControl>
+                          <Input
+                            placeholder="00000-000"
+                            autoComplete="postal-code"
+                            inputMode="numeric"
+                            maxLength={9}
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(event) => field.onChange(formatCep(event.target.value))}
+                            className={isCepLoading ? "pr-10" : undefined}
+                          />
+                        </FormControl>
+                        {isCepLoading ? (
+                          <Loader2 className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                        ) : null}
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
