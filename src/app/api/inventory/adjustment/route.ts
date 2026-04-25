@@ -42,6 +42,22 @@ export async function POST(request: NextRequest) {
       payload.product_id,
       payload.location_id
     )
+
+    if (!previousBalance) {
+      throw new Error("Não foi possível carregar o saldo atual.")
+    }
+
+    if (payload.new_quantity === previousBalance.quantity) {
+      return NextResponse.json({
+        success: true,
+        skipped: true,
+        reference_id: null,
+        difference: 0,
+        new_quantity: payload.new_quantity,
+        data: toInventoryStockBalanceDto(previousBalance),
+      })
+    }
+
     const referenceId = await createInventoryAdjustment(
       storeContext.storeId,
       storeContext.userId,
@@ -58,8 +74,10 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
+      success: true,
       reference_id: referenceId,
       difference: payload.new_quantity - (previousBalance?.quantity ?? 0),
+      new_quantity: balance.quantity,
       data: toInventoryStockBalanceDto(balance),
     })
   } catch (error) {

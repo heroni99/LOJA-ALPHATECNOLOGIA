@@ -60,6 +60,7 @@ import {
   type PdvCompletedSaleDto,
   type PdvSearchResultDto,
 } from "@/lib/pdv-api"
+import type { ScannerSession } from "@/lib/scanner"
 import type { CashCurrentSession } from "@/lib/cash"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -166,7 +167,9 @@ export function PdvPage() {
   const router = useRouter()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const cartItemsRef = useRef<PdvCartItem[]>([])
+  const scannerHighlightFrameRef = useRef<number | null>(null)
   const [session, setSession] = useState<CashCurrentSession | null>(null)
+  const [scannerSession, setScannerSession] = useState<ScannerSession | null>(null)
   const [isLoadingSession, setIsLoadingSession] = useState(true)
   const [search, setSearch] = useState("")
   const [searchResults, setSearchResults] = useState<PdvSearchResult[]>([])
@@ -185,6 +188,9 @@ export function PdvPage() {
     useState<GeneratedFiscalReceipt | null>(null)
   const [isGeneratingFiscalReceipt, setIsGeneratingFiscalReceipt] = useState(false)
   const [recentlyAddedKey, setRecentlyAddedKey] = useState<string | null>(null)
+  const [scannerHighlightedKey, setScannerHighlightedKey] = useState<string | null>(
+    null
+  )
   const completedSaleId = completedSale?.id ?? null
 
   cartItemsRef.current = cartItems
@@ -219,6 +225,26 @@ export function PdvPage() {
 
     return () => window.clearTimeout(timeoutId)
   }, [recentlyAddedKey])
+
+  useEffect(() => {
+    if (!scannerHighlightedKey) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setScannerHighlightedKey(null)
+    }, 1_000)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [scannerHighlightedKey])
+
+  useEffect(() => {
+    return () => {
+      if (scannerHighlightFrameRef.current !== null) {
+        window.cancelAnimationFrame(scannerHighlightFrameRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -399,8 +425,28 @@ export function PdvPage() {
     setIsSearchOpen(false)
   }
 
-  function addResultToCart(result: PdvSearchResult) {
+  function triggerScannerHighlight(itemKey: string) {
+    if (scannerHighlightFrameRef.current !== null) {
+      window.cancelAnimationFrame(scannerHighlightFrameRef.current)
+      scannerHighlightFrameRef.current = null
+    }
+
+    setScannerHighlightedKey(null)
+    scannerHighlightFrameRef.current = window.requestAnimationFrame(() => {
+      setScannerHighlightedKey(itemKey)
+      scannerHighlightFrameRef.current = null
+    })
+  }
+
+  function addResultToCart(
+    result: PdvSearchResult,
+    source: "manual" | "scanner" = "manual"
+  ) {
     const currentItems = cartItemsRef.current
+    let addedItemKey =
+      result.kind === "unit" && result.productUnitId
+        ? `unit:${result.productUnitId}`
+        : `product:${result.productId}`
 
     if (result.kind === "unit" && result.productUnitId) {
       const alreadyAdded = currentItems.some(
@@ -435,6 +481,8 @@ export function PdvPage() {
       )
 
       if (existingItem) {
+        addedItemKey = existingItem.key
+
         if (existingItem.quantity + 1 > result.availableQuantity) {
           toast.error("Estoque indisponível para aumentar a quantidade.")
           return false
@@ -468,7 +516,12 @@ export function PdvPage() {
       }
     }
 
-    setRecentlyAddedKey(result.kind === "unit" && result.productUnitId ? `unit:${result.productUnitId}` : `product:${result.productId}`)
+    setRecentlyAddedKey(addedItemKey)
+
+    if (source === "scanner") {
+      triggerScannerHighlight(addedItemKey)
+    }
+
     clearSearch()
     focusSearchInput()
     return true
@@ -603,6 +656,11 @@ export function PdvPage() {
                 </Badge>
               </>
             ) : null}
+            {scannerSession?.status === "CONNECTED" ? (
+              <Badge className="animate-pulse bg-primary/10 text-primary" variant="outline">
+                📱 Scanner ativo — {scannerSession.pairingCode}
+              </Badge>
+            ) : null}
             <Badge variant="outline">F2 busca rápida</Badge>
           </>
         }
@@ -711,7 +769,10 @@ export function PdvPage() {
               ) : null}
             </div>
 
-            <PdvScannerPanel onProductScanned={addResultToCart} />
+            <PdvScannerPanel
+              onProductScanned={(product) => addResultToCart(product, "scanner")}
+              onSessionChange={setScannerSession}
+            />
 
             <div className="grid gap-3">
               {cartItems.length > 0 ? (
@@ -721,7 +782,8 @@ export function PdvPage() {
                     className={cn(
                       "flex flex-col gap-4 rounded-3xl border border-border/70 bg-background p-4 md:flex-row md:items-center md:justify-between",
                       recentlyAddedKey === item.key &&
-                        "animate-in slide-in-from-top-4 fade-in-0 duration-300"
+                        "animate-in slide-in-from-top-4 fade-in-0 duration-300",
+                      scannerHighlightedKey === item.key && "animate-scanner-highlight"
                     )}
                   >
                     <div className="flex min-w-0 flex-1 items-start gap-4">

@@ -62,6 +62,7 @@ export function toProductStockBalanceDto(balance: ProductStockBalance) {
     id: balance.id,
     location_id: balance.locationId,
     location_name: balance.locationName,
+    location_active: balance.locationActive,
     quantity: balance.quantity,
     updated_at: balance.updatedAt,
   }

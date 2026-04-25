@@ -8,6 +8,7 @@ import { QRCodeSVG } from "qrcode.react"
 import { LoadingButton } from "@/components/shared/loading-button"
 import { Badge } from "@/components/ui/badge"
 import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
+import { formatCentsToBRL } from "@/lib/products"
 import { createClient as createBrowserClient } from "@/lib/supabase/client"
 import type { PdvSearchResult } from "@/lib/pdv"
 import {
@@ -25,6 +26,7 @@ type ScannerSessionApiResponse = {
 
 type PdvScannerPanelProps = {
   onProductScanned: (product: PdvSearchResult) => boolean
+  onSessionChange?: (session: ScannerSession | null) => void
 }
 
 function getScannerStatusLabel(status: ScannerSession["status"]) {
@@ -48,7 +50,10 @@ function getScannerStatusClasses(status: ScannerSession["status"]) {
   }
 }
 
-export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
+export function PdvScannerPanel({
+  onProductScanned,
+  onSessionChange,
+}: PdvScannerPanelProps) {
   const router = useRouter()
   const onProductScannedRef = useRef(onProductScanned)
   const [supabase] = useState(() => createBrowserClient())
@@ -60,6 +65,10 @@ export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
   useEffect(() => {
     onProductScannedRef.current = onProductScanned
   }, [onProductScanned])
+
+  useEffect(() => {
+    onSessionChange?.(session)
+  }, [onSessionChange, session])
 
   useEffect(() => {
     if (!session) {
@@ -121,7 +130,10 @@ export function PdvScannerPanel({ onProductScanned }: PdvScannerPanelProps) {
         const added = onProductScannedRef.current(scanPayload.product)
 
         if (added) {
-          toast.success(`${scanPayload.product.name} adicionado via scanner.`)
+          toast.success("📦 Produto adicionado via scanner:", {
+            description: `${scanPayload.product.name} • ${formatCentsToBRL(scanPayload.product.salePriceCents)}`,
+            duration: 3_000,
+          })
         }
       })
       .subscribe((status) => {

@@ -68,14 +68,20 @@ type ProductCodeRecord = {
 }
 
 type StockBalanceRecord = {
-  id: string
   location_id: string
   quantity: number | string | null
-  updated_at: string
+  updated_at: string | null
   stock_locations?:
-    | { id: string; name: string | null }
-    | { id: string; name: string | null }[]
+    | { id: string; name: string | null; active: boolean | null }
+    | { id: string; name: string | null; active: boolean | null }[]
     | null
+}
+
+type StockLocationOptionRecord = {
+  id: string
+  name: string | null
+  active: boolean
+  is_default: boolean
 }
 
 type MovementRecord = {
@@ -461,30 +467,77 @@ export async function getProductCodes(productId: string): Promise<ProductCode[]>
 }
 
 export async function getProductStockBalances(
-  productId: string
+  productId: string,
+  storeId: string
 ): Promise<ProductStockBalance[]> {
   const supabase = await createClient({ serviceRole: true })
-  const { data, error } = await supabase
-    .from("stock_balances")
-    .select("id, location_id, quantity, updated_at, stock_locations(id, name)")
-    .eq("product_id", productId)
-    .order("updated_at", { ascending: false })
+  const [balancesResult, locationsResult] = await Promise.all([
+    supabase
+      .from("stock_balances")
+      .select("location_id, quantity, updated_at, stock_locations(id, name, active)")
+      .eq("product_id", productId),
+    supabase
+      .from("stock_locations")
+      .select("id, name, active, is_default")
+      .eq("store_id", storeId)
+      .order("is_default", { ascending: false })
+      .order("name", { ascending: true }),
+  ])
 
-  if (error) {
-    throw error
+  if (balancesResult.error) {
+    throw balancesResult.error
   }
 
-  return ((data ?? []) as StockBalanceRecord[]).map((item) => {
-    const location = getSingleRelation(item.stock_locations)
+  if (locationsResult.error) {
+    throw locationsResult.error
+  }
+
+  const locationRecords = (locationsResult.data ?? []) as StockLocationOptionRecord[]
+  const locationById = new Map(locationRecords.map((location) => [location.id, location]))
+  const persistedBalances = ((balancesResult.data ?? []) as StockBalanceRecord[]).map((item) => {
+    const relatedLocation = getSingleRelation(item.stock_locations)
+    const locationRecord = locationById.get(item.location_id)
 
     return {
-      id: item.id,
+      id: item.location_id,
       locationId: item.location_id,
-      locationName: location?.name ?? null,
+      locationName: relatedLocation?.name ?? locationRecord?.name ?? null,
+      locationActive: locationRecord?.active ?? Boolean(relatedLocation?.active),
       quantity: parseQuantity(item.quantity),
       updatedAt: item.updated_at,
-    }
+    } satisfies ProductStockBalance
   })
+  const balanceByLocationId = new Map(
+    persistedBalances.map((balance) => [balance.locationId, balance])
+  )
+  const activeLocations = locationRecords.filter((location) => location.active)
+  const activeRows = activeLocations.map((location) => {
+    const existingBalance = balanceByLocationId.get(location.id)
+
+    if (existingBalance) {
+      return {
+        ...existingBalance,
+        locationName: existingBalance.locationName ?? location.name ?? null,
+        locationActive: true,
+      } satisfies ProductStockBalance
+    }
+
+    return {
+      id: location.id,
+      locationId: location.id,
+      locationName: location.name ?? null,
+      locationActive: true,
+      quantity: 0,
+      updatedAt: null,
+    } satisfies ProductStockBalance
+  })
+  const inactiveRowsWithBalance = persistedBalances
+    .filter((balance) => !locationById.get(balance.locationId)?.active)
+    .sort((left, right) =>
+      (left.locationName ?? "").localeCompare(right.locationName ?? "", "pt-BR")
+    )
+
+  return [...activeRows, ...inactiveRowsWithBalance]
 }
 
 export async function getProductRecentMovements(
@@ -532,7 +585,7 @@ export async function getProductFullDetail(
 
   const [codes, stockBalances, recentMovements] = await Promise.all([
     getProductCodes(productId),
-    getProductStockBalances(productId),
+    getProductStockBalances(productId, storeId),
     getProductRecentMovements(productId),
   ])
 

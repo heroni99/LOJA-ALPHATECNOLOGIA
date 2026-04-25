@@ -7,6 +7,19 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  @keyframes highlight {
+    0% {
+      background: #f9731620;
+    }
+    100% {
+      background: transparent;
+    }
+  }
+
+  .animate-scanner-highlight {
+    animation: highlight 1s ease-out;
+  }
 }
 
 @layer base {

@@ -10,6 +10,7 @@ import {
 import { notFound } from "next/navigation"
 
 import { ProductAttachmentsPanel } from "@/components/products/product-attachments-panel"
+import { ProductStockPanel } from "@/components/products/product-stock-panel"
 import { ProductStatusBadge } from "@/components/products/product-status-badge"
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -23,10 +24,11 @@ import {
   formatCentsToBRL,
   formatDateTime,
   formatQuantity,
+  getProductStockLevel,
+  getProductStockLevelLabel,
   getStockMovementLabel,
   type ProductCode,
   type ProductMovement,
-  type ProductStockBalance,
 } from "@/lib/products"
 import {
   getCurrentStoreContext,
@@ -44,28 +46,6 @@ type ProductDetailPageProps = {
     id: string
   }
 }
-
-const stockColumns: DataTableColumn<ProductStockBalance>[] = [
-  {
-    key: "location",
-    header: "Local",
-    cell: (balance) => balance.locationName ?? "Sem local",
-  },
-  {
-    key: "quantity",
-    header: "Quantidade",
-    cell: (balance) => formatQuantity(balance.quantity),
-    className: "text-right",
-    headClassName: "text-right",
-  },
-  {
-    key: "updated_at",
-    header: "Atualizado em",
-    cell: (balance) => formatDateTime(balance.updatedAt),
-    className: "text-right",
-    headClassName: "text-right",
-  },
-]
 
 const codeColumns: DataTableColumn<ProductCode>[] = [
   {
@@ -175,11 +155,20 @@ export default async function ProductDetailPage({
   )
 
   const { product, codes, stockBalances, recentMovements } = detail
+  const stockLevel = product.isService
+    ? null
+    : getProductStockLevel(product.stockTotal, product.stockMin)
   const stockVariant = product.isService
     ? "warning"
-    : product.stockTotal < product.stockMin
-      ? "danger"
-      : "success"
+    : stockLevel === "above_min"
+      ? "success"
+      : "danger"
+  const stockBadge =
+    stockLevel && stockLevel !== "above_min" ? (
+      <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+        {getProductStockLevelLabel(stockLevel)}
+      </Badge>
+    ) : null
 
   return (
     <div className="flex flex-col gap-6">
@@ -231,8 +220,17 @@ export default async function ProductDetailPage({
 
       <div className="grid gap-4 xl:grid-cols-3">
         <StatCard
-          label="Estoque total"
-          value={product.isService ? "N/A" : formatQuantity(product.stockTotal)}
+          label="Estoque atual"
+          value={
+            product.isService ? (
+              "N/A"
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <span>{formatQuantity(product.stockTotal)}</span>
+                {stockBadge}
+              </div>
+            )
+          }
           icon={<Boxes className="size-5" />}
           variant={stockVariant}
         />
@@ -286,28 +284,13 @@ export default async function ProductDetailPage({
         </TabsList>
 
         <TabsContent value="stock">
-          <SectionCard
-            title="Estoque por local"
-            description="Distribuição atual do saldo nas localizações da loja."
-          >
-            <DataTable
-              columns={stockColumns}
-              data={stockBalances}
-              getRowKey={(balance) => balance.id}
-              emptyState={
-                <EmptyState
-                  icon={Boxes}
-                  title={product.isService ? "Serviço sem estoque." : "Sem saldo registrado."}
-                  description={
-                    product.isService
-                      ? "Serviços não controlam estoque físico."
-                      : "Este produto ainda não possui posições registradas."
-                  }
-                  className="min-h-56 rounded-none border-0 bg-transparent"
-                />
-              }
-            />
-          </SectionCard>
+          <ProductStockPanel
+            productId={product.id}
+            productName={product.name}
+            stockMin={product.stockMin}
+            isService={product.isService}
+            initialBalances={stockBalances}
+          />
         </TabsContent>
 
         <TabsContent value="codes">

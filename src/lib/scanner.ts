@@ -52,7 +52,18 @@ export const scannerPairSchema = z.object({
 })
 
 export const scannerScanSchema = z.object({
-  session_id: z.string().uuid("Sessão do scanner inválida."),
+  pairing_code: z
+    .string()
+    .trim()
+    .min(
+      SCANNER_PAIRING_CODE_LENGTH,
+      `Informe um código com ${SCANNER_PAIRING_CODE_LENGTH} caracteres.`
+    )
+    .max(
+      SCANNER_PAIRING_CODE_LENGTH,
+      `Informe um código com ${SCANNER_PAIRING_CODE_LENGTH} caracteres.`
+    )
+    .regex(/^[A-Z0-9]{6}$/i, "Código de pareamento inválido."),
   barcode: z
     .string()
     .trim()

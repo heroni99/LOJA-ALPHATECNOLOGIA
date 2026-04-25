@@ -4,6 +4,7 @@ import { ProductForm } from "@/components/products/product-form"
 import {
   getCurrentStoreContext,
   getProductById,
+  getProductStockBalances,
   listProductCategories,
   listProductSuppliers,
 } from "@/lib/products-server"
@@ -34,6 +35,8 @@ export default async function EditProductPage({
     notFound()
   }
 
+  const stockBalances = await getProductStockBalances(product.id, storeContext.storeId)
+
   return (
     <ProductForm
       mode="edit"
@@ -42,6 +45,7 @@ export default async function EditProductPage({
       currentImageUrl={product.imageUrl}
       categories={categories}
       suppliers={suppliers}
+      stockBalances={stockBalances}
       initialValues={toProductFormValues(product)}
     />
   )

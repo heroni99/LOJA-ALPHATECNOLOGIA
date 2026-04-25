@@ -21,8 +21,15 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
   formatCentsToBRL,
   formatQuantity,
+  getProductStockLevel,
   getProductListFilters,
   type ProductSummary,
 } from "@/lib/products"
@@ -131,14 +138,26 @@ const productColumns: DataTableColumn<ProductSummary>[] = [
         return <span className="text-muted-foreground">N/A</span>
       }
 
+      const stockLevel = getProductStockLevel(product.stockTotal, product.stockMin)
+      const quantityClassName =
+        stockLevel === "above_min"
+          ? "font-semibold text-emerald-700"
+          : stockLevel === "at_min"
+            ? "font-semibold text-amber-700"
+            : "font-semibold text-red-700"
+
       return (
-        <span
-          className={
-            product.isBelowMin ? "font-semibold text-red-700" : "font-semibold text-emerald-700"
-          }
-        >
-          {formatQuantity(product.stockTotal)}
-        </span>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className={quantityClassName}>{formatQuantity(product.stockTotal)}</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Mínimo: {formatQuantity(product.stockMin)} | Atual:{" "}
+              {formatQuantity(product.stockTotal)}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )
     },
     className: "text-right",

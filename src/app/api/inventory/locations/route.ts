@@ -32,7 +32,9 @@ export async function GET() {
       return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 })
     }
 
-    const locations = await listStockLocations(storeContext.storeId)
+    const locations = (await listStockLocations(storeContext.storeId)).filter(
+      (location) => location.active
+    )
 
     return NextResponse.json({ data: locations.map(toInventoryLocationDto) })
   } catch (error) {

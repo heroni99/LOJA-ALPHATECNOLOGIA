@@ -32,12 +32,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
 import {
   type ProductFormOption,
+  type ProductStockBalance,
   type ProductFormValues,
   defaultProductFormValues,
+  formatQuantity,
   getProductInitialStock,
   productFormSchema,
   toProductMutationInput,
@@ -53,6 +63,7 @@ type ProductFormProps = {
   productId?: string
   internalCode?: string
   currentImageUrl?: string | null
+  stockBalances?: ProductStockBalance[]
 }
 
 type ToggleFieldProps = {
@@ -213,6 +224,7 @@ export function ProductForm({
   productId,
   internalCode,
   currentImageUrl,
+  stockBalances = [],
 }: ProductFormProps) {
   const router = useRouter()
   const [isSaving, setIsSaving] = useState(false)
@@ -606,6 +618,67 @@ export function ProductForm({
               </FormSection>
             </CardContent>
             </Card>
+
+            {mode === "edit" ? (
+              <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+              <CardContent className="pt-6">
+                <FormSection title="Estoque" columns={1}>
+                  <div className="flex flex-col gap-3 rounded-3xl border border-border/70 bg-background/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-muted-foreground">
+                      Para ajustar o estoque, use a página de detalhes do produto.
+                    </p>
+                    {productId ? (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/products/${productId}`}>Ir para detalhes</Link>
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  {isService ? (
+                    <p className="text-sm text-muted-foreground">
+                      Serviços não controlam estoque físico por local.
+                    </p>
+                  ) : stockBalances.length > 0 ? (
+                    <div className="rounded-3xl border border-border/70">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Local</TableHead>
+                            <TableHead className="text-right">Quantidade atual</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {stockBalances.map((balance) => (
+                            <TableRow key={balance.id}>
+                              <TableCell>
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-medium text-foreground">
+                                    {balance.locationName ?? "Sem local"}
+                                  </span>
+                                  {!balance.locationActive ? (
+                                    <span className="text-xs text-muted-foreground">
+                                      Local inativo com saldo histórico.
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold text-foreground">
+                                {formatQuantity(balance.quantity)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Nenhum saldo registrado para este produto.
+                    </p>
+                  )}
+                </FormSection>
+              </CardContent>
+              </Card>
+            ) : null}
 
             <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
             <CardContent className="pt-6">

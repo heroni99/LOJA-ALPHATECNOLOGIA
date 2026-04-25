@@ -11,11 +11,9 @@ function getScanErrorStatus(error: unknown) {
 
   if (
     error instanceof Error &&
-    /não encontrado|expirada|scanner|sessão|pareado|serial|estoque/i.test(
-      error.message
-    )
+    /expirada|scanner|sessão|pareado|serial|estoque/i.test(error.message)
   ) {
-    return /não encontrado/i.test(error.message) ? 404 : 400
+    return 400
   }
 
   return 500
@@ -37,14 +35,21 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const payload = scannerScanSchema.parse(body)
-    const result = await publishScannedBarcode(payload.session_id, payload.barcode)
+    const result = await publishScannedBarcode(payload.pairing_code, payload.barcode)
+
+    if (!result.product) {
+      return NextResponse.json({
+        success: false,
+        barcode: result.barcode,
+        message: "Produto não encontrado.",
+      })
+    }
 
     return NextResponse.json({
-      data: {
-        session: result.session,
-        product: result.product,
-        message: `${result.product.name} enviado para o PDV.`,
-      },
+      success: true,
+      barcode: result.barcode,
+      product: result.product,
+      message: `${result.product.name} enviado para o PDV.`,
     })
   } catch (error) {
     return NextResponse.json(

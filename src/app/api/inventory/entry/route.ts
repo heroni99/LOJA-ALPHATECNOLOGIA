@@ -53,7 +53,9 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
+      success: true,
       reference_id: referenceId,
+      new_quantity: balance.quantity,
       data: toInventoryStockBalanceDto(balance),
     })
   } catch (error) {

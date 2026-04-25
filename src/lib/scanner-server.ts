@@ -32,6 +32,7 @@ type ProductRecord = {
   name: string
   internal_code: string
   sale_price: number | string | null
+  image_url: string | null
   has_serial_control: boolean
 }
 
@@ -113,7 +114,7 @@ async function getSellableProduct(storeId: string, productId: string) {
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
     .from("products")
-    .select("id, name, internal_code, sale_price, has_serial_control")
+    .select("id, name, internal_code, sale_price, image_url, has_serial_control")
     .eq("store_id", storeId)
     .eq("id", productId)
     .eq("active", true)
@@ -174,7 +175,7 @@ function mapSerializedProduct(product: ProductRecord, unit: ProductUnitRecord): 
     salePriceCents: parseDbMoneyToCents(product.sale_price),
     hasSerialControl: true,
     availableQuantity: 1,
-    imageUrl: null,
+    imageUrl: product.image_url,
     category: null,
     imeiOrSerial: unit.imei ?? unit.serial_number ?? unit.imei2 ?? null,
   }
@@ -191,7 +192,7 @@ function mapProduct(product: ProductRecord, availableQuantity: number): PdvSearc
     salePriceCents: parseDbMoneyToCents(product.sale_price),
     hasSerialControl: false,
     availableQuantity,
-    imageUrl: null,
+    imageUrl: product.image_url,
     category: null,
     imeiOrSerial: null,
   }
@@ -228,7 +229,7 @@ async function findScannableProductByBarcode(
       .maybeSingle(),
     supabase
       .from("products")
-      .select("id, name, internal_code, sale_price, has_serial_control")
+      .select("id, name, internal_code, sale_price, image_url, has_serial_control")
       .eq("store_id", storeId)
       .eq("internal_code", barcode)
       .eq("active", true)
@@ -363,12 +364,16 @@ async function broadcastScannerEvent(
   void supabase.removeChannel(channel)
 }
 
-async function getScannerSessionRecordById(sessionId: string) {
+async function getScannerSessionRecordByPairingCode(rawPairingCode: string) {
+  const pairingCode = normalizePairingCode(rawPairingCode)
   const supabase = await createClient({ serviceRole: true })
   const { data, error } = await supabase
     .from("scanner_sessions")
     .select("id, store_id, pairing_code, status, created_at, expires_at")
-    .eq("id", sessionId)
+    .eq("pairing_code", pairingCode)
+    .in("status", ["WAITING", "CONNECTED"])
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle()
 
   if (error) {
@@ -412,28 +417,14 @@ export async function createScannerSession(storeId: string) {
 }
 
 export async function pairScannerSession(rawPairingCode: string) {
-  const pairingCode = normalizePairingCode(rawPairingCode)
-  const supabase = await createClient({ serviceRole: true })
-  const { data, error } = await supabase
-    .from("scanner_sessions")
-    .select("id, store_id, pairing_code, status, created_at, expires_at")
-    .eq("pairing_code", pairingCode)
-    .in("status", ["WAITING", "CONNECTED"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    throw error
-  }
-
-  const session = (data as ScannerSessionRecord | null) ?? null
+  const session = await getScannerSessionRecordByPairingCode(rawPairingCode)
 
   if (!session || !isScannerSessionActive(session)) {
     throw new Error("Código de pareamento inválido ou expirado.")
   }
 
   if (session.status !== "CONNECTED") {
+    const supabase = await createClient({ serviceRole: true })
     const { data: updatedData, error: updateError } = await supabase
       .from("scanner_sessions")
       .update({
@@ -460,8 +451,8 @@ export async function pairScannerSession(rawPairingCode: string) {
   return mapScannerSession(session)
 }
 
-export async function publishScannedBarcode(sessionId: string, rawBarcode: string) {
-  const sessionRecord = await getScannerSessionRecordById(sessionId)
+export async function publishScannedBarcode(rawPairingCode: string, rawBarcode: string) {
+  const sessionRecord = await getScannerSessionRecordByPairingCode(rawPairingCode)
 
   if (!sessionRecord || !isScannerSessionActive(sessionRecord)) {
     throw new Error("Sessão do scanner inválida ou expirada.")
@@ -475,7 +466,11 @@ export async function publishScannedBarcode(sessionId: string, rawBarcode: strin
   const product = await findScannableProductByBarcode(sessionRecord.store_id, barcode)
 
   if (!product) {
-    throw new Error("Nenhum produto encontrado para o código lido.")
+    return {
+      barcode,
+      session: mapScannerSession(sessionRecord),
+      product: null,
+    }
   }
 
   await broadcastScannerEvent(sessionRecord.id, "product-scanned", {
@@ -486,6 +481,7 @@ export async function publishScannedBarcode(sessionId: string, rawBarcode: strin
   })
 
   return {
+    barcode,
     session: mapScannerSession(sessionRecord),
     product,
   }

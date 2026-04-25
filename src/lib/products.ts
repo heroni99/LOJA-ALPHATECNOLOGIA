@@ -183,8 +183,9 @@ export type ProductStockBalance = {
   id: string
   locationId: string
   locationName: string | null
+  locationActive: boolean
   quantity: number
-  updatedAt: string
+  updatedAt: string | null
 }
 
 export type ProductMovement = {
@@ -217,6 +218,8 @@ export type ProductQuickSearchResult = {
   stockTotal: number
   imageUrl: string | null
 }
+
+export type ProductStockLevel = "out" | "below_min" | "at_min" | "above_min"
 
 export const defaultProductFormValues: ProductFormValues = {
   name: "",
@@ -288,6 +291,39 @@ export function formatQuantity(value: number | string | null | undefined) {
     minimumFractionDigits: Number.isInteger(quantity) ? 0 : 3,
     maximumFractionDigits: 3,
   }).format(quantity)
+}
+
+export function getProductStockLevel(
+  quantity: number | string | null | undefined,
+  stockMin: number | string | null | undefined
+): ProductStockLevel {
+  const normalizedQuantity = Number(quantity ?? 0)
+  const normalizedStockMin = Number(stockMin ?? 0)
+
+  if (!Number.isFinite(normalizedQuantity) || normalizedQuantity <= 0) {
+    return "out"
+  }
+
+  if (Number.isFinite(normalizedStockMin) && normalizedQuantity < normalizedStockMin) {
+    return "below_min"
+  }
+
+  if (Number.isFinite(normalizedStockMin) && normalizedQuantity === normalizedStockMin) {
+    return "at_min"
+  }
+
+  return "above_min"
+}
+
+export function getProductStockLevelLabel(level: ProductStockLevel) {
+  const labels: Record<ProductStockLevel, string> = {
+    out: "Sem estoque",
+    below_min: "Estoque baixo",
+    at_min: "Estoque baixo",
+    above_min: "OK",
+  }
+
+  return labels[level]
 }
 
 export function parseBooleanFilter(value: string | null | undefined) {
