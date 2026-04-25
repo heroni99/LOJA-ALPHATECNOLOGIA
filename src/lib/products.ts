@@ -46,6 +46,15 @@ export const productMutationSchema = z.object({
 
 export type ProductMutationInput = z.infer<typeof productMutationSchema>
 
+export const productCreateMutationSchema = productMutationSchema.extend({
+  initial_stock: z
+    .number()
+    .min(0, "O estoque inicial não pode ser negativo.")
+    .default(0),
+})
+
+export type ProductCreateMutationInput = z.infer<typeof productCreateMutationSchema>
+
 export const productFormSchema = z.object({
   name: z.string().trim().min(1, "Informe o nome do produto."),
   category_id: z.string().uuid("Selecione uma categoria."),
@@ -64,6 +73,12 @@ export const productFormSchema = z.object({
     .trim()
     .refine((value) => parseDecimalInput(value) >= 0, {
       message: "Informe um estoque mínimo válido.",
+    }),
+  initial_stock: z
+    .string()
+    .trim()
+    .refine((value) => parseDecimalInput(value) >= 0, {
+      message: "Informe um estoque inicial válido.",
     }),
   ncm: z
     .string()
@@ -214,6 +229,7 @@ export const defaultProductFormValues: ProductFormValues = {
   cost_price: 0,
   sale_price: 0,
   stock_min: "0",
+  initial_stock: "0",
   ncm: "",
   cest: "",
   cfop_default: "",
@@ -359,6 +375,12 @@ export function toProductMutationInput(
   }
 }
 
+export function getProductInitialStock(
+  values: Pick<ProductFormValues, "initial_stock" | "is_service">
+) {
+  return values.is_service ? 0 : parseDecimalInput(values.initial_stock)
+}
+
 export function toProductFormValues(product: {
   name: string
   categoryId: string
@@ -391,6 +413,7 @@ export function toProductFormValues(product: {
     cost_price: product.costPriceCents,
     sale_price: product.salePriceCents,
     stock_min: formatDecimalInput(product.stockMin),
+    initial_stock: "0",
     ncm: product.ncm ?? "",
     cest: product.cest ?? "",
     cfop_default: product.cfopDefault ?? "",

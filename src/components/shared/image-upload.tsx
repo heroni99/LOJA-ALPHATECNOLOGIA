@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { FileText, ImagePlus, Loader2, UploadCloud, X } from "lucide-react"
+import { Camera, FileText, ImagePlus, Loader2, UploadCloud, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { parseApiError } from "@/lib/api-error"
@@ -29,6 +29,7 @@ type ImageUploadProps = {
   currentUrl?: string
   onUpload: (url: string) => void
   productId: string
+  variant?: "default" | "compact"
   bucket?: string
   endpoint?: string
   acceptedTypes?: readonly string[]
@@ -65,6 +66,7 @@ export function ImageUpload({
   currentUrl,
   onUpload,
   productId,
+  variant = "default",
   bucket = PRODUCT_IMAGES_BUCKET,
   endpoint,
   acceptedTypes = PRODUCT_IMAGE_ACCEPTED_TYPES,
@@ -229,6 +231,155 @@ export function ImageUpload({
       window.clearInterval(progressInterval)
       setIsUploading(false)
     }
+  }
+
+  if (variant === "compact") {
+    return (
+      <div className="grid w-full max-w-[200px] gap-3">
+        <input
+          ref={inputRef}
+          type="file"
+          accept={acceptedTypes.join(",")}
+          className="hidden"
+          onChange={(event) => {
+            handleFileSelection(event.target.files?.[0] ?? null)
+            event.target.value = ""
+          }}
+        />
+
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={openFilePicker}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              openFilePicker()
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault()
+            setIsDragging(true)
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault()
+            setIsDragging(false)
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setIsDragging(false)
+            handleFileSelection(event.dataTransfer.files?.[0] ?? null)
+          }}
+          className={cn(
+            "group relative aspect-square w-full max-w-[200px] overflow-hidden rounded-3xl border border-dashed border-border/80 bg-muted/20 transition-colors",
+            isDragging && "border-primary bg-primary/5",
+            isUploading && "pointer-events-none opacity-80"
+          )}
+        >
+          {previewUrl || currentUrl ? (
+            <img
+              src={previewUrl ?? currentUrl ?? ""}
+              alt={selectedFile ? "Pré-visualização da imagem selecionada" : "Imagem atual"}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+              <div className="rounded-full bg-background p-2 text-primary shadow-sm shadow-black/5">
+                <Camera className="size-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-foreground">Adicionar foto</p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {helperText}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {isUploading ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[1px]">
+              <Loader2 className="size-5 animate-spin text-primary" />
+            </div>
+          ) : null}
+        </div>
+
+        {selectedFile ? (
+          <>
+            <p className="truncate text-xs text-muted-foreground">{selectedFile.name}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  openFilePicker()
+                }}
+                disabled={isUploading}
+              >
+                <ImagePlus />
+                Trocar imagem
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void handleUpload()
+                }}
+                disabled={isUploading}
+              >
+                {isUploading ? <Loader2 className="animate-spin" /> : <UploadCloud />}
+                {isUploading ? "Enviando..." : "Enviar"}
+              </Button>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Remover imagem selecionada"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  clearSelection()
+                }}
+                disabled={isUploading}
+              >
+                <X />
+              </Button>
+            </div>
+          </>
+        ) : currentUrl ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={(event) => {
+              event.stopPropagation()
+              openFilePicker()
+            }}
+            disabled={isUploading}
+          >
+            <ImagePlus />
+            Trocar imagem
+          </Button>
+        ) : null}
+
+        {description ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
+        ) : null}
+
+        {isUploading ? (
+          <div className="space-y-2">
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-200"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">{progress}% concluído</p>
+          </div>
+        ) : null}
+      </div>
+    )
   }
 
   return (

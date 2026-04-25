@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useId, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { Save } from "lucide-react"
-import { type Control, useForm } from "react-hook-form"
+import { Camera, Save } from "lucide-react"
+import { Controller, type Control, useForm } from "react-hook-form"
 
 import { FormPage } from "@/components/shared/form-page"
 import { FormSection } from "@/components/shared/form-section"
@@ -24,6 +24,7 @@ import {
   FormMessage,
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -37,10 +38,12 @@ import {
   type ProductFormOption,
   type ProductFormValues,
   defaultProductFormValues,
+  getProductInitialStock,
   productFormSchema,
   toProductMutationInput,
 } from "@/lib/products"
 import { toast } from "@/lib/toast"
+import { cn } from "@/lib/utils"
 
 type ProductFormProps = {
   mode: "create" | "edit"
@@ -57,6 +60,88 @@ type ToggleFieldProps = {
   name: "is_service" | "has_serial_control" | "needs_price_review" | "active"
   label: string
   description: string
+}
+
+type ProductSelectFieldProps = {
+  control: Control<ProductFormValues>
+  name: "category_id" | "supplier_id"
+  label: string
+  placeholder: string
+  options: ProductFormOption[]
+  requiredMessage?: string
+  emptyOptionLabel?: string
+}
+
+const NO_SUPPLIER_VALUE = "__none__"
+
+function ProductSelectField({
+  control,
+  name,
+  label,
+  placeholder,
+  options,
+  requiredMessage,
+  emptyOptionLabel,
+}: ProductSelectFieldProps) {
+  const selectId = useId()
+  const hasEmptyOption = Boolean(emptyOptionLabel)
+
+  return (
+    <Controller
+      name={name}
+      control={control}
+      rules={requiredMessage ? { required: requiredMessage } : undefined}
+      render={({ field, fieldState }) => (
+        <div className="space-y-2">
+          <Label
+            htmlFor={selectId}
+            className={cn(fieldState.error ? "text-destructive" : undefined)}
+          >
+            {label}
+          </Label>
+          <Select
+            value={
+              field.value && field.value.length > 0
+                ? field.value
+                : hasEmptyOption
+                  ? NO_SUPPLIER_VALUE
+                  : undefined
+            }
+            onValueChange={(value) => {
+              field.onChange(
+                hasEmptyOption && value === NO_SUPPLIER_VALUE ? "" : value
+              )
+              field.onBlur()
+            }}
+          >
+            <SelectTrigger
+              id={selectId}
+              className="w-full"
+              aria-invalid={fieldState.invalid}
+              onBlur={field.onBlur}
+            >
+              <SelectValue placeholder={placeholder} />
+            </SelectTrigger>
+            <SelectContent>
+              {hasEmptyOption ? (
+                <SelectItem value={NO_SUPPLIER_VALUE}>{emptyOptionLabel}</SelectItem>
+              ) : null}
+              {options.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {fieldState.error ? (
+            <p className="text-sm font-medium text-destructive">
+              {fieldState.error.message}
+            </p>
+          ) : null}
+        </div>
+      )}
+    />
+  )
 }
 
 function ToggleField({
@@ -102,6 +187,24 @@ function ToggleField({
   )
 }
 
+function ProductImagePlaceholder() {
+  return (
+    <div className="grid w-full max-w-[200px] gap-3">
+      <div className="flex aspect-square w-full max-w-[200px] flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-border/70 bg-muted/20 p-4 text-center">
+        <div className="rounded-full bg-background p-2 text-primary shadow-sm shadow-black/5">
+          <Camera className="size-5" />
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-foreground">Adicionar foto</p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Salve o produto primeiro para enviar a imagem.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ProductForm({
   mode,
   categories,
@@ -126,14 +229,27 @@ export function ProductForm({
         shouldDirty: true,
         shouldValidate: true,
       })
+
+      if (mode === "create") {
+        form.setValue("initial_stock", "0", {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
+      }
     }
-  }, [form, isService])
+  }, [form, isService, mode])
 
   async function handleSubmit(values: ProductFormValues) {
     try {
       setIsSaving(true)
 
-      const payload = toProductMutationInput(values)
+      const payload =
+        mode === "create"
+          ? {
+              ...toProductMutationInput(values),
+              initial_stock: getProductInitialStock(values),
+            }
+          : toProductMutationInput(values)
       const response = await fetch(
         mode === "create" ? "/api/products" : `/api/products/${productId}`,
         {
@@ -158,6 +274,10 @@ export function ProductForm({
           ? "Produto criado com sucesso!"
           : "Produto atualizado com sucesso!"
       )
+
+      if (responseData?.warning) {
+        toast.warning(responseData.warning)
+      }
 
       router.push(`/products/${responseData.data.id}`)
       router.refresh()
@@ -219,152 +339,112 @@ export function ProductForm({
           <fieldset disabled={isSaving} className="grid gap-6">
             <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
             <CardContent className="pt-6">
-              {productId ? (
-                <ImageUpload
-                  productId={productId}
-                  currentUrl={productImageUrl ?? undefined}
-                  onUpload={(url) => {
-                    setProductImageUrl(url)
-                    router.refresh()
-                  }}
-                  description="Envie a foto principal do produto. A imagem é exibida na listagem e na busca rápida."
-                />
-              ) : (
-                <div className="rounded-3xl border border-dashed border-border/70 bg-muted/20 p-5 text-sm text-muted-foreground">
-                  Salve o produto primeiro para gerar o identificador e então enviar a
-                  imagem ao bucket `product-images`.
+              <div className="grid gap-6 lg:grid-cols-[200px_minmax(0,1fr)] lg:items-start">
+                <div className="flex justify-center lg:justify-start">
+                  {productId ? (
+                    <ImageUpload
+                      variant="compact"
+                      productId={productId}
+                      currentUrl={productImageUrl ?? undefined}
+                      onUpload={(url) => {
+                        setProductImageUrl(url)
+                        router.refresh()
+                      }}
+                      description="Foto principal exibida na listagem e na busca rápida."
+                    />
+                  ) : (
+                    <ProductImagePlaceholder />
+                  )}
                 </div>
-              )}
-            </CardContent>
-            </Card>
 
-            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
-            <CardContent className="pt-6">
-              <FormSection title="Identificação">
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem className="md:col-span-2">
-                      <FormLabel>Nome *</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Ex.: iPhone 15 128GB" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="category_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Categoria *</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                <FormSection title="Identificação">
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2">
+                        <FormLabel>Nome *</FormLabel>
                         <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Selecione a categoria" />
-                          </SelectTrigger>
+                          <Input placeholder="Ex.: iPhone 15 128GB" {...field} />
                         </FormControl>
-                        <SelectContent>
-                          {categories.map((category) => (
-                            <SelectItem key={category.id} value={category.id}>
-                              {category.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="supplier_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Fornecedor</FormLabel>
-                      <Select
-                        value={field.value || "none"}
-                        onValueChange={(value) =>
-                          field.onChange(value === "none" ? "" : value)
-                        }
-                      >
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <ProductSelectField
+                    control={form.control}
+                    name="category_id"
+                    label="Categoria *"
+                    placeholder="Selecionar categoria"
+                    options={categories}
+                    requiredMessage="Selecione uma categoria"
+                  />
+                  <ProductSelectField
+                    control={form.control}
+                    name="supplier_id"
+                    label="Fornecedor"
+                    placeholder="Selecionar fornecedor"
+                    options={suppliers}
+                    emptyOptionLabel="Sem fornecedor"
+                  />
+                  <FormField
+                    control={form.control}
+                    name="brand"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Marca</FormLabel>
                         <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Selecione o fornecedor" />
-                          </SelectTrigger>
+                          <Input placeholder="Ex.: Apple" {...field} />
                         </FormControl>
-                        <SelectContent>
-                          <SelectItem value="none">Sem fornecedor</SelectItem>
-                          {suppliers.map((supplier) => (
-                            <SelectItem key={supplier.id} value={supplier.id}>
-                              {supplier.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="brand"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Marca</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Ex.: Apple" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="model"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Modelo</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Ex.: A55 5G" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="supplier_code"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Código do fornecedor</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Ex.: SKU-APPLE-15" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem className="md:col-span-2">
-                      <FormLabel>Descrição</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Detalhes técnicos, variação, observações do catálogo..."
-                          className="min-h-28"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </FormSection>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="model"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Modelo</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Ex.: A55 5G" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="supplier_code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Código do fornecedor</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Ex.: SKU-APPLE-15" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="description"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2">
+                        <FormLabel>Descrição</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Detalhes técnicos, variação, observações do catálogo..."
+                            className="min-h-28"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </FormSection>
+              </div>
             </CardContent>
             </Card>
 
@@ -426,6 +506,31 @@ export function ProductForm({
                     </FormItem>
                   )}
                 />
+                {mode === "create" && !isService ? (
+                  <FormField
+                    control={form.control}
+                    name="initial_stock"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Estoque inicial</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="any"
+                            inputMode="decimal"
+                            placeholder="0"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Quantidade inicial em estoque.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
               </FormSection>
             </CardContent>
             </Card>

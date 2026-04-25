@@ -13,7 +13,7 @@ import {
 } from "@/lib/products-server"
 import {
   getProductListFilters,
-  productMutationSchema,
+  productCreateMutationSchema,
 } from "@/lib/products"
 
 export async function GET(request: NextRequest) {
@@ -52,8 +52,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const payload = productMutationSchema.parse(body)
-    const created = await createProduct(storeContext.storeId, payload)
+    const payload = productCreateMutationSchema.parse(body)
+    const created = await createProduct(storeContext.storeId, storeContext.userId, payload)
 
     if (!created) {
       throw new Error("Não foi possível carregar o produto criado.")
@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
           stockBalances: created.stockBalances,
           recentMovements: created.recentMovements,
         }),
+        warning: created.warning ?? null,
       },
       { status: 201 }
     )

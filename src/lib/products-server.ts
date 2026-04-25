@@ -3,6 +3,7 @@ import "server-only"
 import { getCurrentUser, createClient } from "@/lib/supabase/server"
 import {
   type ProductAttachment,
+  type ProductCreateMutationInput,
   type ProductCode,
   type ProductDetail,
   type ProductFormOption,
@@ -121,6 +122,7 @@ type ProductFullDetail = {
   codes: ProductCode[]
   stockBalances: ProductStockBalance[]
   recentMovements: ProductMovement[]
+  warning?: string | null
 }
 
 type ListProductsResult = {
@@ -129,6 +131,10 @@ type ListProductsResult = {
   totalPages: number
   page: number
   pageSize: number
+}
+
+type StockLocationReference = {
+  id: string
 }
 
 function getSingleRelation<T>(value: T | T[] | null | undefined) {
@@ -665,19 +671,66 @@ export async function deleteProductAttachment(
   return attachment
 }
 
+async function getDefaultStockLocation(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  storeId: string
+) {
+  const { data, error } = await supabase
+    .from("stock_locations")
+    .select("id")
+    .eq("store_id", storeId)
+    .eq("active", true)
+    .eq("is_default", true)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return (data as StockLocationReference | null) ?? null
+}
+
+async function createInitialStockEntry(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input: {
+    productId: string
+    storeId: string
+    userId: string
+    locationId: string
+    quantity: number
+    unitCost: number
+  }
+) {
+  const { error } = await supabase.rpc("inventory_entry", {
+    p_store_id: input.storeId,
+    p_user_id: input.userId,
+    p_product_id: input.productId,
+    p_location_id: input.locationId,
+    p_quantity: input.quantity,
+    p_unit_cost: input.unitCost,
+    p_notes: "Estoque inicial do produto",
+  })
+
+  if (error) {
+    throw error
+  }
+}
+
 export async function createProduct(
   storeId: string,
-  input: ProductMutationInput
+  userId: string,
+  input: ProductCreateMutationInput
 ) {
   const supabase = await createClient({ serviceRole: true })
+  const { initial_stock, ...productInput } = input
 
-  await ensureCategoryInStore(supabase, storeId, input.category_id)
-  await ensureSupplierInStore(supabase, storeId, input.supplier_id ?? null)
+  await ensureCategoryInStore(supabase, storeId, productInput.category_id)
+  await ensureSupplierInStore(supabase, storeId, productInput.supplier_id ?? null)
 
   const payload = {
     store_id: storeId,
-    ...input,
-    stock_min: input.is_service ? 0 : input.stock_min,
+    ...productInput,
+    stock_min: productInput.is_service ? 0 : productInput.stock_min,
   }
 
   const { data, error } = await supabase
@@ -690,7 +743,36 @@ export async function createProduct(
     throw error
   }
 
-  return getProductFullDetail(data.id, storeId)
+  let warning: string | null = null
+
+  if (!productInput.is_service && initial_stock > 0) {
+    const defaultLocation = await getDefaultStockLocation(supabase, storeId)
+
+    if (!defaultLocation) {
+      warning =
+        "Produto salvo sem estoque inicial porque a loja não possui local padrão de estoque ativo."
+    } else {
+      await createInitialStockEntry(supabase, {
+        productId: data.id,
+        storeId,
+        userId,
+        locationId: defaultLocation.id,
+        quantity: initial_stock,
+        unitCost: productInput.cost_price,
+      })
+    }
+  }
+
+  const detail = await getProductFullDetail(data.id, storeId)
+
+  if (!detail) {
+    return null
+  }
+
+  return {
+    ...detail,
+    warning,
+  }
 }
 
 export async function updateProduct(
