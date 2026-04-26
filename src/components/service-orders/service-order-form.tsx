@@ -7,7 +7,11 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { Save } from "lucide-react"
 import { useForm } from "react-hook-form"
 
-import { CustomerAutocomplete } from "@/components/pdv/customer-autocomplete"
+import {
+  CustomerSearch,
+  type CustomerSearchOption,
+} from "@/components/service-orders/customer-search"
+import { ColorPicker } from "@/components/shared/color-picker"
 import { FormPage } from "@/components/shared/form-page"
 import { LoadingButton } from "@/components/shared/loading-button"
 import { Button } from "@/components/ui/button"
@@ -23,7 +27,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { createApiError, parseApiError, shouldRedirectToLogin } from "@/lib/api-error"
-import type { PdvCustomerOption } from "@/lib/pdv"
 import {
   defaultServiceOrderFormValues,
   serviceOrderFormSchema,
@@ -41,9 +44,8 @@ export function ServiceOrderForm({
 }: ServiceOrderFormProps) {
   const router = useRouter()
   const [isSaving, setIsSaving] = useState(false)
-  const [selectedCustomer, setSelectedCustomer] = useState<PdvCustomerOption | null>(
-    null
-  )
+  const [selectedCustomer, setSelectedCustomer] =
+    useState<CustomerSearchOption | null>(null)
   const form = useForm<ServiceOrderFormValues>({
     resolver: zodResolver(serviceOrderFormSchema),
     defaultValues: initialValues,
@@ -130,9 +132,8 @@ export function ServiceOrderForm({
                     <FormItem>
                       <FormLabel>Cliente *</FormLabel>
                       <FormControl>
-                        <CustomerAutocomplete
+                        <CustomerSearch
                           value={selectedCustomer}
-                          placeholder="Buscar cliente por nome ou telefone"
                           onChange={(customer) => {
                             setSelectedCustomer(customer)
                             field.onChange(customer?.id ?? "")
@@ -197,7 +198,7 @@ export function ServiceOrderForm({
                     <FormItem>
                       <FormLabel>Cor</FormLabel>
                       <FormControl>
-                        <Input placeholder="Ex.: Preto" {...field} />
+                        <ColorPicker value={field.value} onChange={field.onChange} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
