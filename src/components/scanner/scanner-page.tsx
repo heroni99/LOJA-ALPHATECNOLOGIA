@@ -1,5 +1,14 @@
 "use client"
 
+import {
+  BrowserMultiFormatReader,
+  type IScannerControls,
+} from "@zxing/browser"
+import {
+  BarcodeFormat,
+  DecodeHintType,
+  NotFoundException,
+} from "@zxing/library"
 import Image from "next/image"
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
@@ -41,10 +50,20 @@ type ScannerScanProduct = {
   imageUrl: string | null
 }
 
+type ScannerScanApiProduct = {
+  name: string
+  internalCode?: string
+  internal_code?: string
+  salePriceCents?: number
+  sale_price?: number
+  imageUrl?: string | null
+  image_url?: string | null
+}
+
 type ScannerScanApiResponse = {
   success?: boolean
   barcode?: string
-  product?: ScannerScanProduct
+  product?: ScannerScanApiProduct
   message?: string
   error?: string
 }
@@ -62,7 +81,6 @@ type ScanFeedback = {
   product?: ScannerScanProduct
 }
 
-const SCANNER_REGION_ID = "alpha-mobile-scanner-region"
 const CAMERA_UNSUPPORTED_MESSAGE = "Câmera não suportada neste navegador"
 const CAMERA_PERMISSION_DENIED_MESSAGE =
   "Permissão de câmera negada. Libere nas configurações."
@@ -72,25 +90,71 @@ const ACTIVE_SCANNER_MESSAGE =
   "Scanner ativo. Alinhe o código de barras na linha laranja."
 const SCAN_FEEDBACK_DURATION_MS = 2_000
 const DUPLICATE_SCAN_WINDOW_MS = 3_000
+const SUPPORTED_BARCODE_FORMATS = [
+  BarcodeFormat.CODE_128,
+  BarcodeFormat.CODE_39,
+  BarcodeFormat.CODE_93,
+  BarcodeFormat.EAN_13,
+  BarcodeFormat.EAN_8,
+  BarcodeFormat.UPC_A,
+  BarcodeFormat.QR_CODE,
+]
+const CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+  audio: false,
+  video: {
+    facingMode: {
+      ideal: "environment",
+    },
+    width: {
+      ideal: 1280,
+    },
+    height: {
+      ideal: 720,
+    },
+  },
+}
 
 function stopStream(stream: MediaStream | null) {
   stream?.getTracks().forEach((track) => track.stop())
 }
 
+function stopVideoPreview(videoElement: HTMLVideoElement | null) {
+  if (!videoElement) {
+    return
+  }
+
+  try {
+    videoElement.pause()
+  } catch {}
+
+  const stream = videoElement.srcObject
+
+  if (stream instanceof MediaStream) {
+    stopStream(stream)
+  }
+
+  try {
+    videoElement.srcObject = null
+  } catch {}
+
+  videoElement.removeAttribute("src")
+}
+
 function getCameraStartErrorMessage(error: unknown) {
+  const details =
+    error instanceof Error
+      ? `${error.name} ${error.message}`.toLowerCase()
+      : String(error).toLowerCase()
+
   if (
-    error instanceof Error &&
-    /notallowed|permission denied|denied|security|notreadable/i.test(
-      error.message
-    )
+    /notallowed|permission denied|denied|security|notreadable/i.test(details)
   ) {
     return CAMERA_BLOCKED_MESSAGE
   }
 
   if (
-    error instanceof Error &&
     /notfound|device not found|devices not found|found no media|overconstrained/i.test(
-      error.message
+      details
     )
   ) {
     return "Nenhuma câmera disponível neste dispositivo."
@@ -113,12 +177,32 @@ function vibrate(pattern: number | number[]) {
   } catch {}
 }
 
+function createScannerHints() {
+  const hints = new Map<DecodeHintType, unknown>()
+
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, SUPPORTED_BARCODE_FORMATS)
+  hints.set(DecodeHintType.TRY_HARDER, true)
+
+  return hints
+}
+
+function normalizeScanProduct(product: ScannerScanApiProduct): ScannerScanProduct {
+  return {
+    name: product.name,
+    internalCode: product.internalCode ?? product.internal_code ?? "",
+    salePriceCents: product.salePriceCents ?? product.sale_price ?? 0,
+    imageUrl: product.imageUrl ?? product.image_url ?? null,
+  }
+}
+
 export function ScannerPage({ initialCode }: ScannerPageProps) {
   const sessionRef = useRef<ScannerSession | null>(null)
   const handlePairRef = useRef<(codeOverride?: string) => Promise<void>>(
     async () => {}
   )
-  const scannerRef = useRef<import("html5-qrcode").Html5Qrcode | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const scannerRef = useRef<BrowserMultiFormatReader | null>(null)
+  const scannerControlsRef = useRef<IScannerControls | null>(null)
   const lastScanRef = useRef<{ value: string; timestamp: number }>({
     value: "",
     timestamp: 0,
@@ -153,7 +237,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
     }
   }, [])
 
-  const resumeScannerAfterFeedback = useCallback(() => {
+  const clearScanFeedbackAfterDelay = useCallback(() => {
     clearResumeTimeout()
     resumeTimeoutRef.current = window.setTimeout(() => {
       setScanFeedback(null)
@@ -163,13 +247,10 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
         return
       }
 
-      try {
-        scannerRef.current.resume()
-        setFeedback({
-          tone: "success",
-          message: ACTIVE_SCANNER_MESSAGE,
-        })
-      } catch {}
+      setFeedback({
+        tone: "success",
+        message: ACTIVE_SCANNER_MESSAGE,
+      })
     }, SCAN_FEEDBACK_DURATION_MS)
   }, [clearResumeTimeout])
 
@@ -177,23 +258,131 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
     clearResumeTimeout()
     isSubmittingScanRef.current = false
 
+    const controls = scannerControlsRef.current
+    scannerControlsRef.current = null
+
+    if (controls) {
+      try {
+        await Promise.resolve(controls.stop())
+      } catch {}
+    }
+
     const scanner = scannerRef.current
     scannerRef.current = null
 
-    if (!scanner) {
-      return
+    if (scanner) {
+      try {
+        ;(scanner as BrowserMultiFormatReader & {
+          reader?: { reset?: () => void }
+        }).reader?.reset?.()
+      } catch {}
     }
 
-    try {
-      if (scanner.isScanning) {
-        await scanner.stop()
-      }
-    } catch {}
-
-    try {
-      scanner.clear()
-    } catch {}
+    stopVideoPreview(videoRef.current)
   }, [clearResumeTimeout])
+
+  const handleDecodedBarcode = useCallback(
+    async (decodedText: string) => {
+      const activeSession = sessionRef.current
+      const barcode = decodedText.trim()
+
+      if (!activeSession || !barcode) {
+        return
+      }
+
+      const now = Date.now()
+
+      if (
+        isSubmittingScanRef.current ||
+        (lastScanRef.current.value === barcode &&
+          now - lastScanRef.current.timestamp < DUPLICATE_SCAN_WINDOW_MS)
+      ) {
+        return
+      }
+
+      lastScanRef.current = {
+        value: barcode,
+        timestamp: now,
+      }
+      isSubmittingScanRef.current = true
+      clearResumeTimeout()
+
+      try {
+        const payload: ScannerScanInput = {
+          barcode,
+          pairing_code: activeSession.pairingCode,
+        }
+        const response = await fetch("/api/scanner/scan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        })
+        const responseData = (await response.json().catch(() => null)) as
+          | ScannerScanApiResponse
+          | null
+
+        if (!response.ok) {
+          throw new Error(
+            responseData?.error ??
+              responseData?.message ??
+              "Não foi possível enviar a leitura para o PDV."
+          )
+        }
+
+        if (responseData?.success && responseData.product) {
+          setScanFeedback({
+            tone: "success",
+            barcode,
+            title: "Produto lido com sucesso!",
+            product: normalizeScanProduct(responseData.product),
+          })
+          setFeedback({
+            tone: "success",
+            message: ACTIVE_SCANNER_MESSAGE,
+          })
+          vibrate([200])
+          clearScanFeedbackAfterDelay()
+          return
+        }
+
+        setScanFeedback({
+          tone: "error",
+          barcode,
+          title: "Produto não encontrado",
+          message: responseData?.message ?? "Confira o código e tente novamente.",
+        })
+        vibrate([100, 50, 100])
+        clearScanFeedbackAfterDelay()
+      } catch (error) {
+        const message = parseApiError(error)
+        const isSessionError = /sessão|expirada|pareado/i.test(message)
+
+        setFeedback({
+          tone: "error",
+          message,
+        })
+
+        if (isSessionError) {
+          setScanFeedback(null)
+          isSubmittingScanRef.current = false
+          setSession(null)
+          return
+        }
+
+        setScanFeedback({
+          tone: "error",
+          barcode,
+          title: "Falha ao processar leitura",
+          message,
+        })
+        vibrate([100, 50, 100])
+        clearScanFeedbackAfterDelay()
+      }
+    },
+    [clearResumeTimeout, clearScanFeedbackAfterDelay]
+  )
 
   useEffect(() => {
     if (!session) {
@@ -215,6 +404,10 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
         setScanFeedback(null)
 
         await destroyScanner()
+        lastScanRef.current = {
+          value: "",
+          timestamp: 0,
+        }
 
         if (!navigator.mediaDevices?.getUserMedia) {
           setFeedback({
@@ -227,9 +420,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
         let permissionStream: MediaStream | null = null
 
         try {
-          permissionStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-          })
+          permissionStream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS)
         } catch {
           setFeedback({
             tone: "error",
@@ -241,149 +432,45 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
           stopStream(permissionStream)
         }
 
-        const {
-          Html5Qrcode,
-          Html5QrcodeSupportedFormats,
-        } = await import("html5-qrcode")
-
-        if (cancelled) {
+        if (cancelled || !videoRef.current) {
           return
         }
 
-        const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
-          verbose: false,
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.CODE_128,
-            Html5QrcodeSupportedFormats.CODE_39,
-            Html5QrcodeSupportedFormats.CODE_93,
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.UPC_A,
-            Html5QrcodeSupportedFormats.QR_CODE,
-          ],
+        const scanner = new BrowserMultiFormatReader(createScannerHints(), {
+          delayBetweenScanAttempts: 120,
+          delayBetweenScanSuccess: 200,
+          tryPlayVideoTimeout: 5_000,
         })
-        const config = {
-          fps: 15,
-          qrbox: {
-            width: 280,
-            height: 100,
-          },
-          aspectRatio: 1.5,
-        }
-
         scannerRef.current = scanner
 
-        const onScanSuccess = async (decodedText: string) => {
-          const activeSession = sessionRef.current
-          const barcode = decodedText.trim()
+        const controls = await scanner.decodeFromConstraints(
+          CAMERA_CONSTRAINTS,
+          videoRef.current,
+          (result, error) => {
+            if (cancelled) {
+              return
+            }
 
-          if (!activeSession || !barcode) {
-            return
+            if (result) {
+              void handleDecodedBarcode(result.getText())
+              return
+            }
+
+            if (error && !(error instanceof NotFoundException)) {
+              return
+            }
           }
+        )
 
-          const now = Date.now()
-
-          if (
-            isSubmittingScanRef.current ||
-            (lastScanRef.current.value === barcode &&
-              now - lastScanRef.current.timestamp < DUPLICATE_SCAN_WINDOW_MS)
-          ) {
-            return
-          }
-
-          lastScanRef.current = {
-            value: barcode,
-            timestamp: now,
-          }
-          isSubmittingScanRef.current = true
-          clearResumeTimeout()
-
+        if (cancelled) {
           try {
-            scanner.pause()
+            await Promise.resolve(controls.stop())
           } catch {}
 
-          try {
-            const payload: ScannerScanInput = {
-              barcode,
-              pairing_code: activeSession.pairingCode,
-            }
-            const response = await fetch("/api/scanner/scan", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(payload),
-            })
-            const responseData = (await response.json().catch(() => null)) as
-              | ScannerScanApiResponse
-              | null
-
-            if (!response.ok) {
-              throw new Error(
-                responseData?.error ??
-                  responseData?.message ??
-                  "Não foi possível enviar a leitura para o PDV."
-              )
-            }
-
-            if (responseData?.success && responseData.product) {
-              setScanFeedback({
-                tone: "success",
-                barcode,
-                title: "Produto lido com sucesso!",
-                product: responseData.product,
-              })
-              setFeedback({
-                tone: "success",
-                message: ACTIVE_SCANNER_MESSAGE,
-              })
-              vibrate([200])
-              resumeScannerAfterFeedback()
-              return
-            }
-
-            setScanFeedback({
-              tone: "error",
-              barcode,
-              title: "Produto não encontrado",
-              message: responseData?.message ?? "Confira o código e tente novamente.",
-            })
-            vibrate([100, 50, 100])
-            resumeScannerAfterFeedback()
-          } catch (error) {
-            const message = parseApiError(error)
-            const isSessionError = /sessão|expirada|pareado/i.test(message)
-
-            setFeedback({
-              tone: "error",
-              message,
-            })
-
-            if (isSessionError) {
-              setScanFeedback(null)
-              isSubmittingScanRef.current = false
-              setSession(null)
-              return
-            }
-
-            setScanFeedback({
-              tone: "error",
-              barcode,
-              title: "Falha ao processar leitura",
-              message,
-            })
-            vibrate([100, 50, 100])
-            resumeScannerAfterFeedback()
-          }
+          return
         }
-        const onScanError = () => {}
 
-        await scanner.start(
-          { facingMode: "environment" },
-          config,
-          onScanSuccess,
-          onScanError
-        )
+        scannerControlsRef.current = controls
 
         if (!cancelled) {
           setFeedback({
@@ -392,6 +479,10 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
           })
         }
       } catch (error) {
+        if (cancelled) {
+          return
+        }
+
         const message = getCameraStartErrorMessage(error)
 
         setFeedback({
@@ -415,7 +506,7 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
   }, [
     clearResumeTimeout,
     destroyScanner,
-    resumeScannerAfterFeedback,
+    handleDecodedBarcode,
     scannerRetryKey,
     session,
   ])
@@ -496,6 +587,10 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
   function handleDisconnect() {
     setSession(null)
     setScanFeedback(null)
+    lastScanRef.current = {
+      value: "",
+      timestamp: 0,
+    }
     setFeedback({
       tone: "neutral",
       message: "Informe um novo código para conectar outro PDV.",
@@ -612,9 +707,12 @@ export function ScannerPage({ initialCode }: ScannerPageProps) {
                 </div>
 
                 <div className="relative overflow-hidden rounded-[28px] border border-border/70 bg-black">
-                  <div
-                    id={SCANNER_REGION_ID}
-                    className="min-h-[300px] w-full bg-black"
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="block min-h-[300px] w-full bg-black object-cover"
                   />
                   <div className="pointer-events-none absolute inset-x-4 top-1/2 h-0.5 -translate-y-1/2 bg-orange-500 shadow-[0_0_12px_rgba(249,115,22,0.9)]" />
 

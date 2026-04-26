@@ -29,6 +29,8 @@ type PdvScannerPanelProps = {
   onSessionChange?: (session: ScannerSession | null) => void
 }
 
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"])
+
 function getScannerStatusLabel(status: ScannerSession["status"]) {
   const labels = {
     WAITING: "Aguardando celular",
@@ -50,6 +52,14 @@ function getScannerStatusClasses(status: ScannerSession["status"]) {
   }
 }
 
+function buildScannerUrl(baseUrl: string, pairingCode: string) {
+  const url = new URL("/scanner", baseUrl)
+
+  url.searchParams.set("code", pairingCode)
+
+  return url.toString()
+}
+
 export function PdvScannerPanel({
   onProductScanned,
   onSessionChange,
@@ -61,6 +71,7 @@ export function PdvScannerPanel({
   const [isCreatingSession, setIsCreatingSession] = useState(false)
   const [scannerUrl, setScannerUrl] = useState("")
   const [isLocalOrigin, setIsLocalOrigin] = useState(false)
+  const [scannerUrlWarning, setScannerUrlWarning] = useState<string | null>(null)
 
   useEffect(() => {
     onProductScannedRef.current = onProductScanned
@@ -74,15 +85,40 @@ export function PdvScannerPanel({
     if (!session) {
       setScannerUrl("")
       setIsLocalOrigin(false)
+      setScannerUrlWarning(null)
       return
     }
 
-    const url = new URL("/scanner", window.location.origin)
-    url.searchParams.set("code", session.pairingCode)
+    const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()
+    const isLocalHost = LOCAL_HOSTNAMES.has(window.location.hostname)
 
-    setScannerUrl(url.toString())
-    setIsLocalOrigin(
-      ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)
+    try {
+      if (configuredAppUrl) {
+        setScannerUrl(buildScannerUrl(configuredAppUrl, session.pairingCode))
+        setIsLocalOrigin(false)
+        setScannerUrlWarning(null)
+        return
+      }
+
+      if (isLocalHost) {
+        setScannerUrl(buildScannerUrl(window.location.origin, session.pairingCode))
+        setIsLocalOrigin(true)
+        setScannerUrlWarning(null)
+        return
+      }
+    } catch {
+      setScannerUrl("")
+      setIsLocalOrigin(false)
+      setScannerUrlWarning(
+        "NEXT_PUBLIC_APP_URL está inválida. Configure a URL principal completa do app."
+      )
+      return
+    }
+
+    setScannerUrl("")
+    setIsLocalOrigin(false)
+    setScannerUrlWarning(
+      "Configure NEXT_PUBLIC_APP_URL com a URL principal para gerar o QR Code do scanner fora do ambiente local."
     )
   }, [session])
 
@@ -226,6 +262,9 @@ export function PdvScannerPanel({
                   URLs com <code>localhost</code> não funcionam fora da máquina.
                 </p>
               ) : null}
+              {scannerUrlWarning ? (
+                <p className="text-amber-600">{scannerUrlWarning}</p>
+              ) : null}
             </div>
           </div>
 
@@ -240,7 +279,9 @@ export function PdvScannerPanel({
                 includeMargin
               />
             ) : (
-              <p className="text-xs text-muted-foreground">Gerando QR Code...</p>
+              <p className="text-center text-xs text-muted-foreground">
+                {scannerUrlWarning ?? "Gerando QR Code..."}
+              </p>
             )}
           </div>
         </div>

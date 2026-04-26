@@ -45,11 +45,18 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    const product = {
+      ...result.product,
+      internal_code: result.product.internalCode,
+      sale_price: result.product.salePriceCents,
+      image_url: result.product.imageUrl,
+    }
+
     return NextResponse.json({
       success: true,
       barcode: result.barcode,
-      product: result.product,
-      message: `${result.product.name} enviado para o PDV.`,
+      product,
+      message: `${product.name} enviado para o PDV.`,
     })
   } catch (error) {
     return NextResponse.json(
