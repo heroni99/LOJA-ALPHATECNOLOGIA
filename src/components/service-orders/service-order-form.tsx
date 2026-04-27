@@ -120,11 +120,11 @@ export function ServiceOrderForm({
           className="grid gap-6"
         >
           <fieldset disabled={isSaving} className="grid gap-6">
-            <Card className="border border-border/70 bg-card/95 shadow-sm shadow-black/5">
+            <Card className="overflow-visible border border-border/70 bg-card/95 shadow-sm shadow-black/5">
               <CardHeader>
                 <CardTitle>Cliente</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="overflow-visible">
                 <FormField
                   control={form.control}
                   name="customer_id"
@@ -133,6 +133,9 @@ export function ServiceOrderForm({
                       <FormLabel>Cliente *</FormLabel>
                       <FormControl>
                         <CustomerSearch
+                          ref={field.ref}
+                          name={field.name}
+                          onBlur={field.onBlur}
                           value={selectedCustomer}
                           onChange={(customer) => {
                             setSelectedCustomer(customer)

@@ -1,8 +1,13 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
-import { Loader2, Search, UserRound, X } from "lucide-react"
+import {
+  forwardRef,
+  useEffect,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react"
+import { Loader2, Search } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
@@ -14,52 +19,110 @@ export type CustomerSearchOption = {
   cpfCnpj: string | null
 }
 
-type CustomersApiResponse = {
-  data?: {
-    id: string
-    name: string
-    phone: string | null
-    cpf_cnpj: string | null
-  }[]
+type CustomersApiItem = {
+  id: string
+  name: string
+  phone: string | null
+  cpf_cnpj: string | null
 }
 
-type CustomerSearchProps = {
+type CustomersApiResponse = {
+  data?: CustomersApiItem[] | { customers?: CustomersApiItem[] }
+  customers?: CustomersApiItem[]
+} | CustomersApiItem[]
+
+type CustomerSearchProps = Omit<
+  ComponentPropsWithoutRef<typeof Input>,
+  "value" | "onChange"
+> & {
   value: CustomerSearchOption | null
   onChange: (customer: CustomerSearchOption | null) => void
   placeholder?: string
 }
 
-export function CustomerSearch({
-  value,
-  onChange,
-  placeholder = "Buscar cliente por nome ou telefone",
-}: CustomerSearchProps) {
+function mapCustomerOption(customer: CustomersApiItem): CustomerSearchOption {
+  return {
+    id: customer.id,
+    name: customer.name,
+    phone: customer.phone,
+    cpfCnpj: customer.cpf_cnpj,
+  }
+}
+
+function getCustomersFromResponse(data: CustomersApiResponse) {
+  if (Array.isArray(data)) {
+    return data
+  }
+
+  if (Array.isArray(data.customers)) {
+    return data.customers
+  }
+
+  if (Array.isArray(data.data)) {
+    return data.data
+  }
+
+  if (data.data && typeof data.data === "object" && Array.isArray(data.data.customers)) {
+    return data.data.customers
+  }
+
+  return []
+}
+
+export const CustomerSearch = forwardRef<HTMLInputElement, CustomerSearchProps>(
+  function CustomerSearch(
+    {
+      value,
+      onChange,
+      placeholder = "Buscar cliente por nome ou telefone",
+      className,
+      onBlur,
+      onFocus,
+      ...inputProps
+    },
+    ref
+  ) {
   const [search, setSearch] = useState(value?.name ?? "")
   const [results, setResults] = useState<CustomerSearchOption[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [isOpen, setIsOpen] = useState(false)
+  const [showDropdown, setShowDropdown] = useState(false)
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchOption | null>(
+    value
+  )
 
   useEffect(() => {
-    setSearch(value?.name ?? "")
+    if (value) {
+      setSelectedCustomer(value)
+      setSearch(value.name)
+      return
+    }
+
+    setSelectedCustomer(null)
   }, [value])
 
   useEffect(() => {
     const query = search.trim()
 
-    if (value || query.length < 2) {
+    if (query.length < 2) {
       setResults([])
       setIsLoading(false)
+      setShowDropdown(false)
+      return
+    }
 
-      if (query.length < 2) {
-        setIsOpen(false)
-      }
+    if (selectedCustomer && query === selectedCustomer.name.trim()) {
+      setResults([])
+      setIsLoading(false)
+      setShowDropdown(false)
 
       return
     }
 
     const controller = new AbortController()
+    setIsLoading(true)
+    setShowDropdown(true)
+
     const timeoutId = window.setTimeout(() => {
-      setIsLoading(true)
       fetch(`/api/customers?search=${encodeURIComponent(query)}`, {
         signal: controller.signal,
       })
@@ -70,16 +133,11 @@ export function CustomerSearch({
 
           const data = (await response.json()) as CustomersApiResponse
 
-          return (data.data ?? []).map((customer) => ({
-            id: customer.id,
-            name: customer.name,
-            phone: customer.phone,
-            cpfCnpj: customer.cpf_cnpj,
-          }))
+          return getCustomersFromResponse(data).map(mapCustomerOption)
         })
         .then((items) => {
           setResults(items)
-          setIsOpen(true)
+          setShowDropdown(true)
         })
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") {
@@ -87,7 +145,7 @@ export function CustomerSearch({
           }
 
           setResults([])
-          setIsOpen(true)
+          setShowDropdown(true)
         })
         .finally(() => {
           setIsLoading(false)
@@ -98,73 +156,81 @@ export function CustomerSearch({
       controller.abort()
       window.clearTimeout(timeoutId)
     }
-  }, [search, value])
+  }, [search, selectedCustomer])
 
   function handleSelect(customer: CustomerSearchOption) {
+    setSelectedCustomer(customer)
     setSearch(customer.name)
     setResults([])
-    setIsOpen(false)
+    setIsLoading(false)
+    setShowDropdown(false)
     onChange(customer)
-  }
-
-  function handleClear() {
-    setSearch("")
-    setResults([])
-    setIsOpen(false)
-    onChange(null)
-  }
-
-  if (value) {
-    return (
-      <div className="rounded-2xl border border-border/70 bg-muted/30 p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <UserRound className="size-4 text-muted-foreground" />
-              <span className="truncate">{value.name}</span>
-            </div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {value.phone ?? "Telefone não informado"}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleClear}
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:border-orange-300 hover:text-orange-600"
-            aria-label="Limpar cliente selecionado"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      </div>
-    )
   }
 
   return (
     <div
       className="relative"
-      onBlur={() => {
-        window.setTimeout(() => setIsOpen(false), 120)
-      }}
     >
       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
       <Input
+        {...inputProps}
+        ref={ref}
         value={search}
-        className="pl-9"
+        autoComplete="off"
+        className={cn("pl-9", className)}
         placeholder={placeholder}
-        onFocus={() => {
-          if (search.trim().length >= 2) {
-            setIsOpen(true)
+        onFocus={(event) => {
+          if (!selectedCustomer && search.trim().length >= 2) {
+            setShowDropdown(true)
           }
+
+          onFocus?.(event)
         }}
         onChange={(event) => {
-          setSearch(event.target.value)
-          setIsOpen(true)
+          const nextValue = event.target.value
+          const trimmedValue = nextValue.trim()
+          const selectedName = selectedCustomer?.name ?? value?.name ?? ""
+
+          setSearch(nextValue)
+
+          if (!trimmedValue) {
+            setSelectedCustomer(null)
+            setResults([])
+            setIsLoading(false)
+            setShowDropdown(false)
+
+            if (selectedCustomer || value) {
+              onChange(null)
+            }
+
+            return
+          }
+
+          if (selectedName && nextValue !== selectedName) {
+            setSelectedCustomer(null)
+
+            if (selectedCustomer || value) {
+              onChange(null)
+            }
+          }
+
+          if (trimmedValue.length >= 2) {
+            setShowDropdown(true)
+            return
+          }
+
+          setResults([])
+          setIsLoading(false)
+          setShowDropdown(false)
+        }}
+        onBlur={(event) => {
+          window.setTimeout(() => setShowDropdown(false), 120)
+          onBlur?.(event)
         }}
       />
 
-      {isOpen && search.trim().length >= 2 ? (
-        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-3xl border border-border bg-popover shadow-lg ring-1 ring-foreground/5">
+      {showDropdown && !selectedCustomer && search.trim().length >= 2 ? (
+        <div className="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-3xl border border-border bg-popover shadow-lg ring-1 ring-foreground/5">
           {isLoading ? (
             <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
@@ -187,9 +253,10 @@ export function CustomerSearch({
                   <span className="font-medium text-foreground">
                     {customer.name}
                   </span>
-                  <span className="text-muted-foreground">
-                    {customer.phone ?? "Telefone não informado"}
-                  </span>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span>{customer.phone ?? "Telefone não informado"}</span>
+                    <span>{customer.cpfCnpj ?? "CPF/CNPJ não informado"}</span>
+                  </div>
                 </button>
               ))}
             </div>
@@ -208,4 +275,7 @@ export function CustomerSearch({
       ) : null}
     </div>
   )
-}
+  }
+)
+
+CustomerSearch.displayName = "CustomerSearch"
